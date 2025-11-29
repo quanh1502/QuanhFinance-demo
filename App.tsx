@@ -8,17 +8,19 @@ import { sadDogImageBase64 } from './assets/sadDogImage';
 import VirtualCard from './components/VirtualCard';
 import ShoppingCopilot from './components/ShoppingCopilot';
 
-// --- FIREBASE IMPORTS (MỚI) ---
+// --- FIREBASE IMPORTS ---
 import { signInWithPopup, signOut, onAuthStateChanged, User } from "firebase/auth";
 import { doc, onSnapshot, setDoc, getDoc } from "firebase/firestore";
-import { auth, googleProvider, db } from "./firebase"; // File bạn vừa tạo
+import { auth, googleProvider, db } from "./firebase";
 
 const STORAGE_KEY = 'spending_app_data_v1';
 const UI_MODE_KEY = 'spending_app_ui_mode';
 
-// Helper parse date: Dùng chung cho cả Local và Firebase để đảm bảo dữ liệu ngày tháng luôn đúng định dạng
+// Helper parse date
 const parseDataDates = (data: any) => {
     const parseDate = (d: string | Date) => d ? new Date(d) : new Date();
+    if (!data) return {};
+    
     if (data.gasHistory) data.gasHistory.forEach((x: any) => x.date = parseDate(x.date));
     if (data.lastWifiPayment) data.lastWifiPayment = parseDate(data.lastWifiPayment);
     if (data.incomeLogs) data.incomeLogs.forEach((x: any) => x.date = parseDate(x.date));
@@ -37,7 +39,6 @@ const parseDataDates = (data: any) => {
     return data;
 }
 
-// Fallback load local (dùng khi chưa đăng nhập)
 const loadLocalData = () => {
     try {
         const saved = localStorage.getItem(STORAGE_KEY);
@@ -46,7 +47,7 @@ const loadLocalData = () => {
     } catch (e) { return null; }
 };
 
-// --- Inline Components (Giữ nguyên từ bản trước để đảm bảo giao diện không đổi) ---
+// --- INLINE COMPONENTS (Định nghĩa tại đây để đảm bảo logic mới nhất) ---
 
 interface CurrencyInputProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'> {
     value: number;
@@ -83,16 +84,25 @@ const DebtItem: React.FC<DebtItemProps> = ({ debt, onAddPayment, onWithdrawPayme
     const [showHistory, setShowHistory] = useState(false);
     const [isConfirmingPayment, setIsConfirmingPayment] = useState(false);
     const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10));
+
     const remaining = debt.totalAmount - debt.amountPaid;
     const daysLeft = Math.ceil((debt.dueDate.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
     const weeklyPaymentNeed = remaining > 0 ? remaining / Math.max(1, Math.ceil(daysLeft / 7)) : 0;
+
     const handleInitiateAdd = () => { if (inputValue > 0) { setIsConfirmingPayment(true); setPaymentDate(new Date().toISOString().slice(0, 10)); } };
     const confirmAddPayment = () => { onAddPayment(debt.id, inputValue, new Date(paymentDate)); setInputValue(0); setIsConfirmingPayment(false); };
     const confirmWithdraw = () => { if (withdrawReason.trim()) { onWithdrawPayment(debt.id, inputValue, withdrawReason); setShowWithdrawReason(false); setWithdrawReason(''); setInputValue(0); } else alert("Cần lý do!"); };
-    const getSmartSuggestion = () => { if (remaining <= 0) return null; if (disposableIncome <= 0) return { text: "Thu nhập thấp, tạm ngưng.", color: "text-slate-400", bgColor: "bg-slate-700/50" }; if (disposableIncome > weeklyPaymentNeed * 2) return { text: "Dư dả! Tăng mức góp.", color: "text-green-300", bgColor: "bg-green-900/30" }; return { text: "Tiếp tục theo kế hoạch.", color: "text-blue-300", bgColor: "bg-blue-900/30" }; };
+
+    const getSmartSuggestion = () => {
+        if (remaining <= 0) return null;
+        if (disposableIncome <= 0) return { text: "Thu nhập thấp, tạm ngưng.", color: "text-slate-400", bgColor: "bg-slate-700/50" };
+        if (disposableIncome > weeklyPaymentNeed * 2) return { text: "Dư dả! Tăng mức góp.", color: "text-green-300", bgColor: "bg-green-900/30" };
+        return { text: "Tiếp tục theo kế hoạch.", color: "text-blue-300", bgColor: "bg-blue-900/30" };
+    };
     const suggestion = getSmartSuggestion();
     let statusColor = daysLeft < 0 ? 'text-red-400' : daysLeft <= 3 ? 'text-orange-400' : 'text-green-400';
     let statusText = daysLeft < 0 ? `Quá hạn ${Math.abs(daysLeft)} ngày` : daysLeft <= 3 ? `Gấp! Còn ${daysLeft} ngày` : `Còn ${daysLeft} ngày`;
+
     return (
         <div className={`p-4 rounded-lg shadow-md mb-3 transition-all duration-300 ${daysLeft < 0 ? 'bg-red-900/20 border border-red-500/30' : `${theme.cardBg} border border-slate-700/50`}`}>
             <div className="flex justify-between items-start"><div className="flex-1 pr-2"><div className="flex items-center gap-2"><h4 className={`font-bold text-lg ${theme.primaryTextColor}`}>{debt.name}</h4><button onClick={() => onEdit(debt)} className="text-xs text-slate-500 hover:text-white p-1 rounded"><EditIcon /></button><button onClick={() => setShowHistory(!showHistory)} className={`text-xs px-2 py-1 rounded transition ${showHistory ? 'bg-blue-500/30 text-blue-200' : 'text-slate-500 hover:text-blue-300'}`}><HistoryIcon className="mr-1"/> Lịch sử</button></div><p className={`text-sm ${theme.secondaryTextColor} flex items-center gap-2`}><TagIcon /> {debt.source}</p><p className={`text-sm ${theme.secondaryTextColor} flex items-center gap-2`}><CalendarIcon/> Hạn: {formatDate(debt.dueDate)}</p></div><div className="text-right"><p className={`font-bold text-xl ${theme.primaryTextColor}`}>{remaining.toLocaleString('vi-VN')}đ</p>{remaining > 0 && <p className="text-xs font-semibold text-pink-400 mt-1 flex justify-end gap-1"><ChartLineIcon className="w-3 h-3" /> ~{Math.round(weeklyPaymentNeed).toLocaleString('vi-VN')}đ/tuần</p>}<div className={`text-sm font-bold flex items-center justify-end gap-1 mt-1 ${statusColor}`}><HourglassIcon className="text-xs"/> {statusText}</div></div></div>
@@ -135,11 +145,10 @@ const BudgetRow: React.FC<BudgetRowProps> = ({ icon, label, budget, actual, onBu
 
 // --- APP COMPONENT ---
 const App: React.FC = () => {
-    // --- 1. User & Auth State ---
     const [user, setUser] = useState<User | null>(null);
     const [loadingData, setLoadingData] = useState(true);
 
-    // --- 2. Data States ---
+    // --- Data States ---
     const [gasHistory, setGasHistory] = useState<GasLog[]>([]);
     const [lastWifiPayment, setLastWifiPayment] = useState<Date | null>(null);
     const [debts, setDebts] = useState<Debt[]>([]);
@@ -147,7 +156,6 @@ const App: React.FC = () => {
     const [foodLogs, setFoodLogs] = useState<FoodLog[]>([]);
     const [miscLogs, setMiscLogs] = useState<ExpenseLog[]>([]);
     const [savingsHistory, setSavingsHistory] = useState<SavingsTransaction[]>([]);
-    
     const [foodBudget, setFoodBudget] = useState<number>(315000);
     const [miscBudget, setMiscBudget] = useState<number>(100000);
     const [holidays, setHolidays] = useState<Holiday[]>([]);
@@ -173,10 +181,9 @@ const App: React.FC = () => {
     const [isIncomeEditOpen, setIncomeEditOpen] = useState(false);
     const [editingIncomeId, setEditingIncomeId] = useState<string | null>(null);
     const [editIncomeValue, setEditIncomeValue] = useState<number>(0);
-    const [editIncomeDate, setEditIncomeDate] = useState<string>(''); 
+    const [editIncomeDate, setEditIncomeDate] = useState<string>('');
     const [isSavingsHistoryOpen, setSavingsHistoryOpen] = useState(false);
 
-    // New Debt States
     const [debtType, setDebtType] = useState<'standard' | 'shopee'>('standard');
     const [newDebt, setNewDebt] = useState({ name: '', source: '', totalAmount: 0, dueDate: new Date().toISOString().slice(0, 10), targetMonth: currentDate.getMonth(), targetYear: currentDate.getFullYear() });
     const [shopeeBillMonth, setShopeeBillMonth] = useState(currentDate.getMonth());
@@ -186,30 +193,21 @@ const App: React.FC = () => {
     const [recurringEndDate, setRecurringEndDate] = useState('');
     const [newMiscLog, setNewMiscLog] = useState({ name: '', amount: 0, date: new Date().toISOString().slice(0, 10) });
 
-    // --- 3. AUTH & DATA SYNC LOGIC (Trái tim của Firebase) ---
+    // --- AUTH & DATA SYNC ---
     useEffect(() => {
         const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
             setUser(currentUser);
             if (currentUser) {
-                // Đã đăng nhập: Lắng nghe Firestore
                 const docRef = doc(db, "users", currentUser.uid);
                 const docSnap = await getDoc(docRef);
-                
-                // MIGRATION: Lần đầu đăng nhập, đẩy dữ liệu LocalStorage lên mây
                 if (!docSnap.exists()) {
                     const localData = loadLocalData();
-                    if (localData) {
-                        console.log("Đang đồng bộ dữ liệu cũ lên mây...");
-                        await setDoc(docRef, { ...localData, updatedAt: new Date().toISOString() });
-                    }
+                    if (localData) await setDoc(docRef, { ...localData, updatedAt: new Date().toISOString() });
                 }
-
-                // Realtime Listener
                 const unsubDoc = onSnapshot(docRef, (doc) => {
                     if (doc.exists()) {
                         const data = doc.data();
-                        const parsed = parseDataDates(data); // Parse lại ngày tháng từ chuỗi
-                        
+                        const parsed = parseDataDates(data);
                         setGasHistory(parsed.gasHistory || []);
                         setLastWifiPayment(parsed.lastWifiPayment || null);
                         setDebts(parsed.debts || []);
@@ -219,7 +217,6 @@ const App: React.FC = () => {
                         setSavingsHistory(parsed.savingsHistory || []);
                         setFoodBudget(parsed.foodBudget || 315000);
                         setMiscBudget(parsed.miscBudget || 100000);
-                        
                         const upcoming = getUpcomingHolidays();
                         if (parsed.holidays) {
                             const merged = upcoming.map(freshH => {
@@ -227,15 +224,12 @@ const App: React.FC = () => {
                                 return savedH ? { ...freshH, ...savedH } : freshH;
                             });
                             setHolidays(merged);
-                        } else {
-                            setHolidays(upcoming);
-                        }
+                        } else { setHolidays(upcoming); }
                     }
                     setLoadingData(false);
                 });
                 return () => unsubDoc();
             } else {
-                // Chưa đăng nhập: Dùng LocalStorage
                 const localData = loadLocalData();
                 if (localData) {
                     setGasHistory(localData.gasHistory || []);
@@ -255,84 +249,55 @@ const App: React.FC = () => {
         return () => unsubscribe();
     }, []);
 
-    // Save Data Logic (Debounce 2s)
     const isFirstRun = useRef(true);
     useEffect(() => {
         if (isFirstRun.current) { isFirstRun.current = false; return; }
         if (loadingData) return;
-
         const dataToSave = { gasHistory, lastWifiPayment, debts, incomeLogs, foodLogs, miscLogs, savingsHistory, foodBudget, miscBudget, holidays };
-        
-        // 1. Luôn backup vào LocalStorage
         localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));
-
-        // 2. Sync lên Firebase nếu đã đăng nhập
         const timeoutId = setTimeout(async () => {
             if (user) {
                 try {
                     const docRef = doc(db, "users", user.uid);
-                    // Firestore tự xử lý Date object, không cần stringify thủ công
                     await setDoc(docRef, { ...dataToSave, updatedAt: new Date() }, { merge: true });
                     console.log("Đã đồng bộ lên Firebase");
-                } catch (e) {
-                    console.error("Lỗi đồng bộ Firebase:", e);
-                }
+                } catch (e) { console.error("Lỗi đồng bộ:", e); }
             }
         }, 2000);
-
         return () => clearTimeout(timeoutId);
     }, [gasHistory, lastWifiPayment, debts, incomeLogs, foodLogs, miscLogs, savingsHistory, foodBudget, miscBudget, holidays, user, loadingData]);
 
     useEffect(() => { localStorage.setItem(UI_MODE_KEY, uiMode); }, [uiMode]);
 
-    // Auth Actions
-    const handleLogin = async () => {
-        try { await signInWithPopup(auth, googleProvider); } 
-        catch (error: any) { alert("Lỗi đăng nhập: " + error.message); }
-    };
-    const handleLogout = async () => {
-        if(confirm("Bạn muốn đăng xuất? Dữ liệu trên máy này sẽ không mất nhưng sẽ ngừng đồng bộ.")) await signOut(auth);
-    };
+    const handleLogin = async () => { try { await signInWithPopup(auth, googleProvider); } catch (error: any) { alert("Lỗi đăng nhập: " + error.message); } };
+    const handleLogout = async () => { if(confirm("Bạn muốn đăng xuất?")) { await signOut(auth); window.location.reload(); } };
 
-    // --- Computed ---
+    // Computed
     const seasonalTheme = useMemo<SeasonalTheme>(() => {
         const month = currentDate.getMonth();
-        const greetingName = user ? user.displayName?.split(' ').pop() : 'bạn'; // Lấy tên cuối
+        const greetingName = user ? user.displayName?.split(' ').pop() : 'bạn';
         const base = { greeting: `Chào ${greetingName}!`, background: "bg-gradient-to-br from-gray-900 via-blue-950 to-indigo-900", primaryTextColor: "text-slate-100", secondaryTextColor: "text-slate-400", cardBg: "bg-black/20 backdrop-blur-lg border border-white/10", accentColor: "bg-amber-400", icon: <TaurusIcon className="text-amber-300"/> };
         if (month === 11 || month === 0) return { ...base, greeting: `Giáng sinh an lành, ${greetingName}!`, decorations: <SnowflakeIcon className="text-white/10 absolute top-10 right-10 text-6xl animate-pulse" /> };
         return base;
     }, [currentDate, user]);
 
-    const GAS_COST = 70000;
-    const WIFI_COST = 30000;
-    const FIXED_EXPENSES = GAS_COST + WIFI_COST;
-    
+    const GAS_COST = 70000; const WIFI_COST = 30000; const FIXED_EXPENSES = GAS_COST + WIFI_COST;
     const getFilteredTotal = (logs: { date: Date; amount: number }[]) => logs.filter(log => isDateInFilter(new Date(log.date), filter)).reduce((sum, log) => sum + log.amount, 0);
     const filteredIncome = getFilteredTotal(incomeLogs);
     const filteredFoodSpending = getFilteredTotal(foodLogs);
     const filteredMiscSpending = getFilteredTotal(miscLogs);
-
     const { activeDebts, completedDebts } = useMemo(() => debts.reduce((acc, d) => { d.amountPaid >= d.totalAmount ? acc.completedDebts.push(d) : acc.activeDebts.push(d); return acc; }, { activeDebts: [] as Debt[], completedDebts: [] as Debt[] }), [debts]);
     const displayDebts = useMemo(() => activeDebts.filter(d => { const fm = d.targetMonth ?? d.dueDate.getMonth(); const fy = d.targetYear ?? d.dueDate.getFullYear(); return fm === debtFilterMonth && fy === debtFilterYear; }).sort((a, b) => a.dueDate.getTime() - b.dueDate.getTime()), [activeDebts, debtFilterMonth, debtFilterYear]);
-    
-    const filteredActualDebtPaid = useMemo(() => {
-        let total = 0;
-        debts.forEach(d => d.transactions?.forEach(t => { if (t.type === 'payment' && isDateInFilter(new Date(t.date), filter)) total += t.amount; }));
-        return total;
-    }, [debts, filter]);
-
+    const filteredActualDebtPaid = useMemo(() => { let total = 0; debts.forEach(d => d.transactions?.forEach(t => { if (t.type === 'payment' && isDateInFilter(new Date(t.date), filter)) total += t.amount; })); return total; }, [debts, filter]);
     const currentSavingsBalance = useMemo(() => savingsHistory.reduce((acc, trans) => trans.type === 'deposit' ? acc + trans.amount : acc - trans.amount, 0), [savingsHistory]);
     const filteredSavingsDeposited = useMemo(() => savingsHistory.filter(t => t.type === 'deposit' && isDateInFilter(new Date(t.date), filter)).reduce((sum, t) => sum + t.amount, 0), [savingsHistory, filter]);
-
     const weeklyDebtContribution = activeDebts.reduce((t, d) => { const rem = d.totalAmount - d.amountPaid; if (rem <= 0) return t; const w = Math.ceil(daysBetween(new Date(), d.dueDate) / 7); return w <= 0 ? t + rem : t + (rem / w); }, 0);
     const totalActualSpending = FIXED_EXPENSES + filteredFoodSpending + filteredMiscSpending + filteredActualDebtPaid;
     const totalPlannedSpending = FIXED_EXPENSES + foodBudget + miscBudget + weeklyDebtContribution;
     const financialStatus = filteredIncome - totalActualSpending - filteredSavingsDeposited;
-    
     const disposableIncomeForDebts = filteredIncome - (FIXED_EXPENSES + filteredFoodSpending + filteredMiscSpending);
     const currentMonthIncome = useMemo(() => incomeLogs.filter(l => !l.isSavingsWithdrawal && new Date(l.date).getMonth() === new Date().getMonth() && new Date(l.date).getFullYear() === new Date().getFullYear()).reduce((sum, l) => sum + l.amount, 0), [incomeLogs]);
     const monthlyIncomeRef = currentMonthIncome > 0 ? currentMonthIncome : (totalPlannedSpending * 4);
-
     const lastGasFill = gasHistory.length > 0 ? gasHistory[gasHistory.length - 1] : null;
     const isGasFilledToday = lastGasFill ? new Date().toDateString() === lastGasFill.date.toDateString() : false;
     const isWifiPaidRecently = lastWifiPayment ? daysBetween(lastWifiPayment, new Date()) < 7 : false;
