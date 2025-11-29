@@ -199,7 +199,11 @@ const App: React.FC = () => {
     const [recurringEndDate, setRecurringEndDate] = useState('');
     const [newMiscLog, setNewMiscLog] = useState({ name: '', amount: 0, date: new Date().toISOString().slice(0, 10) });
 
-    // --- AUTH & DATA SYNC ---
+    // --- FIX RACE CONDITION START ---
+    // Ref này dùng để chặn onSnapshot ghi đè dữ liệu khi đang có thay đổi chưa lưu
+    const isPendingSave = useRef(false);
+
+    // --- AUTH & DATA SYNC (UPDATED) ---
     useEffect(() => {
         const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
             setUser(currentUser);
@@ -211,7 +215,11 @@ const App: React.FC = () => {
                     const localData = loadLocalData();
                     if (localData) await setDoc(docRef, { ...localData, updatedAt: new Date().toISOString() });
                 }
+
                 const unsubDoc = onSnapshot(docRef, (doc) => {
+                    // [QUAN TRỌNG] Nếu đang chờ lưu (isPendingSave = true), BỎ QUA cập nhật từ server
+                    if (isPendingSave.current) return;
+
                     if (doc.exists()) {
                         const data = doc.data();
                         const parsed = parseDataDates(data);
@@ -256,25 +264,47 @@ const App: React.FC = () => {
         return () => unsubscribe();
     }, []);
 
+    // --- SAVE DATA EFFECT (UPDATED) ---
     const isFirstRun = useRef(true);
     useEffect(() => {
         if (isFirstRun.current) { isFirstRun.current = false; return; }
         if (loadingData) return;
+
         const dataToSave = { gasHistory, lastWifiPayment, debts, incomeLogs, foodLogs, miscLogs, savingsHistory, foodBudget, miscBudget, holidays };
+        
+        // Lưu LocalStorage
         localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));
+
         if (user) {
             setSyncStatus('syncing');
+            
+            // [QUAN TRỌNG] Đánh dấu là đang có thay đổi chưa lưu lên Server
+            isPendingSave.current = true;
+
             const timeoutId = setTimeout(async () => {
                 try {
                     const docRef = doc(db, "users", user.uid);
                     await setDoc(docRef, { ...sanitizeForFirestore(dataToSave), updatedAt: new Date().toISOString() }, { merge: true });
+                    
                     setSyncStatus('saved');
+                    
+                    // [QUAN TRỌNG] Bỏ cờ hiệu sau khi lưu thành công (delay 500ms để đảm bảo an toàn)
+                    setTimeout(() => {
+                        isPendingSave.current = false;
+                    }, 500);
+
                     setTimeout(() => setSyncStatus('idle'), 2000);
-                } catch (e) { setSyncStatus('idle'); console.error("Lỗi lưu:", e); }
-            }, 2000);
+                } catch (e) { 
+                    setSyncStatus('idle'); 
+                    console.error("Lỗi lưu:", e);
+                    isPendingSave.current = false; // Reset nếu lỗi
+                }
+            }, 2000); // Debounce 2 giây
+            
             return () => clearTimeout(timeoutId);
         }
     }, [gasHistory, lastWifiPayment, debts, incomeLogs, foodLogs, miscLogs, savingsHistory, foodBudget, miscBudget, holidays, user, loadingData]);
+    // --- FIX RACE CONDITION END ---
 
     useEffect(() => { localStorage.setItem(UI_MODE_KEY, uiMode); }, [uiMode]);
 
@@ -424,7 +454,7 @@ const App: React.FC = () => {
                 </div>
 
                 <div className="lg:col-span-2">
-                     <div className={`${seasonalTheme.cardBg} p-5 rounded-lg shadow-lg`}>
+                      <div className={`${seasonalTheme.cardBg} p-5 rounded-lg shadow-lg`}>
                         <div className="flex flex-col md:flex-row md:justify-between md:items-center mb-4 gap-4">
                            <div className="flex items-center gap-2"><h3 className={`text-xl font-bold ${seasonalTheme.primaryTextColor}`}>Nợ cần trả</h3><div className="flex items-center gap-2 bg-black/30 rounded-lg px-3 py-1 border border-slate-700"><select value={debtFilterMonth} onChange={(e) => setDebtFilterMonth(parseInt(e.target.value))} className="bg-transparent text-sm font-semibold text-white outline-none">{MONTH_NAMES.map((m, idx) => <option key={idx} value={idx} className="bg-slate-900">{m}</option>)}</select><input type="number" value={debtFilterYear} onChange={(e) => setDebtFilterYear(parseInt(e.target.value))} className="bg-transparent text-sm font-semibold text-white w-16 outline-none"/></div></div>
                            <div className="flex gap-2"><button onClick={() => setDebtHistoryOpen(true)} className="px-3 py-2 text-sm font-semibold text-slate-300 bg-slate-800 rounded-lg flex items-center gap-1"><HistoryIcon /> Lịch sử</button><button onClick={() => { setNewDebt({ name: '', source: '', totalAmount: 0, dueDate: new Date().toISOString().slice(0, 10), targetMonth: debtFilterMonth, targetYear: debtFilterYear }); setEditingDebtId(null); setIsRecurringDebt(false); setDebtModalOpen(true); }} className={`px-4 py-2 text-sm font-semibold text-slate-900 rounded-lg shadow-md ${seasonalTheme.accentColor}`}><PlusIcon className="inline mr-1"/> Thêm</button></div>
@@ -432,7 +462,7 @@ const App: React.FC = () => {
                         <div className="max-h-[70vh] overflow-y-auto pr-2">
                             {displayDebts.length > 0 ? displayDebts.map(d => <DebtItem key={d.id} debt={d} onAddPayment={handleAddPayment} onWithdrawPayment={handleWithdrawPayment} onEdit={handleEditDebt} theme={seasonalTheme} disposableIncome={disposableIncomeForDebts} />) : <div className={`text-center ${seasonalTheme.secondaryTextColor} py-8 border-2 border-dashed border-slate-700 rounded-xl`}>Không có khoản nợ nào tháng này.</div>}
                         </div>
-                     </div>
+                      </div>
                 </div>
             </div>
         </>
