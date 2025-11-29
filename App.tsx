@@ -485,32 +485,112 @@ const App: React.FC = () => {
         </>
     );
 
-    const renderPlanning = () => (
-        <div className="space-y-6 animate-fade-in-up">
-            <ShoppingCopilot 
-                theme={seasonalTheme}
-                disposableIncome={financialStatus > 0 ? financialStatus : 0}
-                totalDebt={activeDebts.reduce((s, d) => s + (d.totalAmount - d.amountPaid), 0)}
-                monthlyIncomeEstimate={monthlyIncomeRef}
-                savingsBalance={currentSavingsBalance}
-            />
+    const renderPlanning = () => {
+        const totalDebtAmount = debts.reduce((sum, d) => sum + d.totalAmount, 0);
+        const totalPaidAmount = debts.reduce((sum, d) => sum + d.amountPaid, 0);
+        const totalRemainingAmount = totalDebtAmount - totalPaidAmount;
 
-            <div className={`${seasonalTheme.cardBg} p-6 rounded-xl shadow-lg border-t-4 border-amber-500`}>
-                <h3 className={`text-2xl font-bold ${seasonalTheme.primaryTextColor} mb-6 flex items-center gap-2`}><PlaneIcon className="text-amber-400" /> Kế hoạch Nghỉ Lễ</h3>
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                    <div className="space-y-4">
-                        {holidays.map(h => (
-                            <div key={h.id} className="bg-slate-800/60 p-4 rounded-lg border border-slate-600">
-                                <div className="flex justify-between items-start mb-3"><div><h5 className="text-lg font-bold text-white">{h.name}</h5><p className="text-amber-400 font-medium"><SunIcon className="mr-1"/>{formatDate(h.date)}</p></div><label className="relative inline-flex items-center cursor-pointer"><input type="checkbox" checked={h.isTakingOff} onChange={(e) => handleSaveHoliday(h.id, { isTakingOff: e.target.checked })} className="sr-only peer"/><div className="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:bg-amber-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div><span className="ml-2 text-sm font-medium text-slate-300">Nghỉ</span></label></div>
-                                {h.isTakingOff && <div className="space-y-3 bg-black/20 p-3 rounded"><div className="grid grid-cols-2 gap-4"><div><label className="text-xs text-slate-400">Từ ngày</label><input type="date" className="input w-full text-sm" value={h.startDate || ''} onChange={(e) => handleSaveHoliday(h.id, { startDate: e.target.value })}/></div><div><label className="text-xs text-slate-400">Đến ngày</label><input type="date" className="input w-full text-sm" value={h.endDate || ''} onChange={(e) => handleSaveHoliday(h.id, { endDate: e.target.value })}/></div></div><textarea placeholder="Ghi chú..." className="input w-full text-sm h-16" value={h.note || ''} onChange={(e) => handleSaveHoliday(h.id, { note: e.target.value })}></textarea></div>}
-                            </div>
-                        ))}
+        return (
+            <div className="space-y-6 animate-fade-in-up">
+                <ShoppingCopilot 
+                    theme={seasonalTheme}
+                    disposableIncome={financialStatus > 0 ? financialStatus : 0}
+                    totalDebt={activeDebts.reduce((s, d) => s + (d.totalAmount - d.amountPaid), 0)}
+                    monthlyIncomeEstimate={monthlyIncomeRef}
+                    savingsBalance={currentSavingsBalance}
+                />
+
+                <div className={`${seasonalTheme.cardBg} p-6 rounded-xl shadow-lg border-t-4 border-pink-500`}>
+                    <h3 className={`text-2xl font-bold ${seasonalTheme.primaryTextColor} mb-6 flex items-center gap-2`}>
+                        <CreditCardIcon className="text-pink-400" /> Tổng quan Nợ & Trả góp
+                    </h3>
+                    
+                    {/* Summary Stats */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                        <div className="bg-slate-800/60 p-4 rounded-lg border border-slate-600 text-center">
+                            <p className="text-slate-400 text-xs uppercase font-bold mb-1">Tổng nợ gốc</p>
+                            <p className="text-xl font-bold text-white">{totalDebtAmount.toLocaleString('vi-VN')}đ</p>
+                        </div>
+                        <div className="bg-slate-800/60 p-4 rounded-lg border border-slate-600 text-center">
+                            <p className="text-slate-400 text-xs uppercase font-bold mb-1">Đã trả</p>
+                            <p className="text-xl font-bold text-emerald-400">{totalPaidAmount.toLocaleString('vi-VN')}đ</p>
+                        </div>
+                        <div className="bg-slate-800/60 p-4 rounded-lg border border-slate-600 text-center">
+                            <p className="text-slate-400 text-xs uppercase font-bold mb-1">Còn lại</p>
+                            <p className="text-xl font-bold text-pink-400">{totalRemainingAmount.toLocaleString('vi-VN')}đ</p>
+                        </div>
                     </div>
-                    <div className="bg-indigo-900/30 border border-indigo-500/30 p-5 rounded-lg flex items-center justify-center text-slate-400"><p>Chọn "Nghỉ" để xem phân tích tài chính (Tính năng đang phát triển)</p></div>
+
+                    {/* Active Debts */}
+                    <div className="mb-6">
+                        <h4 className="font-bold text-lg text-white mb-3 border-b border-slate-700 pb-2 flex justify-between items-center">
+                            <span>Đang thực hiện ({activeDebts.length})</span>
+                            <span className="text-xs font-normal text-slate-400">Ưu tiên trả sớm</span>
+                        </h4>
+                        <div className="space-y-3">
+                            {activeDebts.length > 0 ? activeDebts.map(d => {
+                                const percent = Math.min((d.amountPaid / d.totalAmount) * 100, 100);
+                                return (
+                                    <div key={d.id} className="bg-slate-800/40 p-3 rounded border border-slate-700/50 flex justify-between items-center">
+                                        <div className="flex-1">
+                                            <div className="flex justify-between mb-1">
+                                                <span className="font-bold text-slate-200">{d.name}</span>
+                                                <span className="text-xs text-pink-300 font-bold">Còn {(d.totalAmount - d.amountPaid).toLocaleString()}đ</span>
+                                            </div>
+                                            <div className="w-full bg-slate-700 rounded-full h-1.5">
+                                                <div className="bg-pink-500 h-1.5 rounded-full" style={{ width: `${percent}%` }}></div>
+                                            </div>
+                                            <div className="flex justify-between mt-1 text-[10px] text-slate-500">
+                                                <span>{formatDate(d.dueDate)}</span>
+                                                <span>{Math.round(percent)}%</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            }) : <p className="text-slate-500 text-sm italic text-center py-2">Không có khoản nợ đang trả.</p>}
+                        </div>
+                    </div>
+
+                    {/* Completed Debts (History) */}
+                    <div>
+                        <h4 className="font-bold text-lg text-emerald-400 mb-3 border-b border-slate-700 pb-2 flex justify-between items-center">
+                            <span>Lịch sử đã trả ({completedDebts.length})</span>
+                            <span className="text-xs font-normal text-slate-400">Đã hoàn thành</span>
+                        </h4>
+                        <div className="space-y-2 max-h-60 overflow-y-auto pr-1 custom-scrollbar">
+                            {completedDebts.length > 0 ? completedDebts.map(d => (
+                                <div key={d.id} className="bg-emerald-900/10 p-3 rounded border border-emerald-500/20 flex justify-between items-center">
+                                    <div>
+                                        <p className="font-bold text-slate-300 text-sm line-through decoration-emerald-500/50">{d.name}</p>
+                                        <p className="text-[10px] text-slate-500">{d.source}</p>
+                                    </div>
+                                    <div className="text-right">
+                                        <p className="font-bold text-emerald-500 text-sm">{d.totalAmount.toLocaleString()}đ</p>
+                                        <p className="text-[10px] text-slate-500">Hoàn tất</p>
+                                    </div>
+                                </div>
+                            )) : <p className="text-slate-500 text-sm italic text-center py-2">Chưa có lịch sử trả nợ.</p>}
+                        </div>
+                    </div>
+                </div>
+
+                <div className={`${seasonalTheme.cardBg} p-6 rounded-xl shadow-lg border-t-4 border-amber-500`}>
+                    <h3 className={`text-2xl font-bold ${seasonalTheme.primaryTextColor} mb-6 flex items-center gap-2`}><PlaneIcon className="text-amber-400" /> Kế hoạch Nghỉ Lễ</h3>
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                        <div className="space-y-4">
+                            {holidays.map(h => (
+                                <div key={h.id} className="bg-slate-800/60 p-4 rounded-lg border border-slate-600">
+                                    <div className="flex justify-between items-start mb-3"><div><h5 className="text-lg font-bold text-white">{h.name}</h5><p className="text-amber-400 font-medium"><SunIcon className="mr-1"/>{formatDate(h.date)}</p></div><label className="relative inline-flex items-center cursor-pointer"><input type="checkbox" checked={h.isTakingOff} onChange={(e) => handleSaveHoliday(h.id, { isTakingOff: e.target.checked })} className="sr-only peer"/><div className="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:bg-amber-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div><span className="ml-2 text-sm font-medium text-slate-300">Nghỉ</span></label></div>
+                                    {h.isTakingOff && <div className="space-y-3 bg-black/20 p-3 rounded"><div className="grid grid-cols-2 gap-4"><div><label className="text-xs text-slate-400">Từ ngày</label><input type="date" className="input w-full text-sm" value={h.startDate || ''} onChange={(e) => handleSaveHoliday(h.id, { startDate: e.target.value })}/></div><div><label className="text-xs text-slate-400">Đến ngày</label><input type="date" className="input w-full text-sm" value={h.endDate || ''} onChange={(e) => handleSaveHoliday(h.id, { endDate: e.target.value })}/></div></div><textarea placeholder="Ghi chú..." className="input w-full text-sm h-16" value={h.note || ''} onChange={(e) => handleSaveHoliday(h.id, { note: e.target.value })}></textarea></div>}
+                                </div>
+                            ))}
+                        </div>
+                        <div className="bg-indigo-900/30 border border-indigo-500/30 p-5 rounded-lg flex items-center justify-center text-slate-400"><p>Chọn "Nghỉ" để xem phân tích tài chính (Tính năng đang phát triển)</p></div>
+                    </div>
                 </div>
             </div>
-        </div>
-    );
+        );
+    };
 
     return (
         <div className={`min-h-screen ${seasonalTheme.background} ${seasonalTheme.primaryTextColor} font-sans p-4 sm:p-6 lg:p-8 relative z-0`}>
