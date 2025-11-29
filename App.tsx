@@ -152,6 +152,155 @@ const BudgetRow: React.FC<BudgetRowProps> = ({ icon, label, budget, actual, onBu
     );
 };
 
+// --- SIMULATION VIEW COMPONENT ---
+interface SimulationViewProps {
+    theme: SeasonalTheme;
+    activeDebts: Debt[];
+    onClose: () => void;
+}
+
+const SimulationView: React.FC<SimulationViewProps> = ({ theme, activeDebts, onClose }) => {
+    const [targetDate, setTargetDate] = useState<string>(new Date(new Date().getTime() + 7 * 86400000).toISOString().slice(0, 10)); // Default to next week
+    const [simIncomes, setSimIncomes] = useState<{ id: string; name: string; amount: number }[]>([]);
+    const [simExpenses, setSimExpenses] = useState<{ id: string; name: string; amount: number }[]>([]);
+    const [newItemName, setNewItemName] = useState('');
+    const [newItemAmount, setNewItemAmount] = useState(0);
+    const [newItemType, setNewItemType] = useState<'income' | 'expense'>('income');
+
+    const handleAddItem = () => {
+        if (newItemAmount <= 0) return;
+        const item = { id: Date.now().toString(), name: newItemName || (newItemType === 'income' ? 'Thu nhập thêm' : 'Chi tiêu thêm'), amount: newItemAmount };
+        if (newItemType === 'income') setSimIncomes([...simIncomes, item]);
+        else setSimExpenses([...simExpenses, item]);
+        setNewItemName('');
+        setNewItemAmount(0);
+    };
+
+    const handleDeleteItem = (id: string, type: 'income' | 'expense') => {
+        if (type === 'income') setSimIncomes(simIncomes.filter(i => i.id !== id));
+        else setSimExpenses(simExpenses.filter(i => i.id !== id));
+    };
+
+    // Calculate Debt Obligations for the simulated period (assuming weekly contribution logic)
+    const simulatedDebtPayment = useMemo(() => {
+        const d = new Date(targetDate);
+        // This is a simplified projection: Assuming we need to pay roughly 1 week's worth if target is ~7 days away
+        // Or if target is month end, maybe more. 
+        // For simplicity in "Simulation", let's sum up the weekly contribution needed * number of weeks until target
+        const daysToTarget = Math.max(1, Math.ceil(daysBetween(new Date(), d)));
+        const weeksToTarget = Math.ceil(daysToTarget / 7);
+        
+        return activeDebts.reduce((total, debt) => {
+            const remaining = debt.totalAmount - debt.amountPaid;
+            if (remaining <= 0) return total;
+            const daysLeftInDebt = Math.max(1, Math.ceil((debt.dueDate.getTime() - new Date().getTime()) / (86400000)));
+            const debtWeeklyNeed = remaining / Math.max(1, Math.ceil(daysLeftInDebt / 7));
+            
+            // Payment needed in this simulated timeframe
+            return total + (debtWeeklyNeed * weeksToTarget);
+        }, 0);
+    }, [activeDebts, targetDate]);
+
+    const totalSimIncome = simIncomes.reduce((s, i) => s + i.amount, 0);
+    const totalSimExpense = simExpenses.reduce((s, i) => s + i.amount, 0);
+    const simulatedBalance = totalSimIncome - totalSimExpense - simulatedDebtPayment;
+
+    return (
+        <div className="space-y-6 animate-fade-in-up">
+            <div className={`${theme.cardBg} p-6 rounded-xl shadow-lg border border-purple-500/30`}>
+                <div className="flex justify-between items-start mb-4">
+                    <h3 className={`text-2xl font-bold ${theme.primaryTextColor} flex items-center gap-2`}>
+                        <CloudArrowUpIcon className="text-purple-400" /> Giả lập Tài chính
+                    </h3>
+                    <button onClick={onClose} className="text-sm text-slate-400 hover:text-white bg-slate-800 px-3 py-1 rounded">Quay lại</button>
+                </div>
+                
+                <div className="mb-6 p-4 bg-slate-800/50 rounded-lg border border-slate-700">
+                    <label className="block text-sm text-slate-300 mb-2 font-bold">Dự tính cho thời điểm:</label>
+                    <input type="date" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} className="input w-full bg-slate-900 border-slate-600 text-white" />
+                    <p className="text-xs text-slate-500 mt-2 italic">Hệ thống sẽ tự động tính toán áp lực trả nợ tính đến ngày này.</p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                    {/* Simulated Inputs */}
+                    <div>
+                        <h4 className="font-bold text-emerald-400 mb-2 border-b border-emerald-500/30 pb-1">Nguồn thu dự kiến</h4>
+                        <div className="space-y-2 mb-3 max-h-40 overflow-y-auto">
+                            {simIncomes.map(i => (
+                                <div key={i.id} className="flex justify-between text-sm bg-emerald-900/10 p-2 rounded">
+                                    <span>{i.name}</span>
+                                    <div className="flex gap-2">
+                                        <span className="font-bold text-emerald-300">+{i.amount.toLocaleString()}đ</span>
+                                        <button onClick={() => handleDeleteItem(i.id, 'income')} className="text-slate-500 hover:text-red-400"><TrashIcon className="w-3 h-3"/></button>
+                                    </div>
+                                </div>
+                            ))}
+                            {simIncomes.length === 0 && <p className="text-xs text-slate-600 italic">Chưa có thu nhập giả định.</p>}
+                        </div>
+                    </div>
+
+                    {/* Simulated Expenses */}
+                    <div>
+                        <h4 className="font-bold text-red-400 mb-2 border-b border-red-500/30 pb-1">Chi tiêu dự kiến</h4>
+                        <div className="space-y-2 mb-3 max-h-40 overflow-y-auto">
+                            {simExpenses.map(i => (
+                                <div key={i.id} className="flex justify-between text-sm bg-red-900/10 p-2 rounded">
+                                    <span>{i.name}</span>
+                                    <div className="flex gap-2">
+                                        <span className="font-bold text-red-300">-{i.amount.toLocaleString()}đ</span>
+                                        <button onClick={() => handleDeleteItem(i.id, 'expense')} className="text-slate-500 hover:text-red-400"><TrashIcon className="w-3 h-3"/></button>
+                                    </div>
+                                </div>
+                            ))}
+                            {simExpenses.length === 0 && <p className="text-xs text-slate-600 italic">Chưa có chi tiêu giả định.</p>}
+                        </div>
+                    </div>
+                </div>
+
+                {/* Add Item Form */}
+                <div className="bg-slate-900/50 p-3 rounded-lg border border-slate-700 mb-6 flex flex-col gap-2">
+                    <div className="flex gap-2">
+                        <select value={newItemType} onChange={(e) => setNewItemType(e.target.value as any)} className="input w-24 text-xs">
+                            <option value="income">Thu</option>
+                            <option value="expense">Chi</option>
+                        </select>
+                        <input type="text" placeholder="Tên khoản (ví dụ: Lương tuần 21)" value={newItemName} onChange={(e) => setNewItemName(e.target.value)} className="input flex-1 text-sm" />
+                    </div>
+                    <div className="flex gap-2">
+                        <CurrencyInput value={newItemAmount} onValueChange={setNewItemAmount} placeholder="Số tiền" className="input flex-1 text-sm" />
+                        <button onClick={handleAddItem} disabled={newItemAmount <= 0} className="bg-purple-600 hover:bg-purple-500 text-white px-4 rounded font-bold text-sm">Thêm</button>
+                    </div>
+                </div>
+
+                {/* Simulation Result */}
+                <div className="bg-slate-900 p-4 rounded-xl border border-slate-700">
+                    <h4 className="text-center text-slate-400 uppercase text-xs font-bold mb-4">Kết quả dự báo</h4>
+                    <div className="space-y-3">
+                        <div className="flex justify-between text-sm">
+                            <span className="text-slate-300">Tổng thu giả định:</span>
+                            <span className="text-emerald-400 font-bold">{totalSimIncome.toLocaleString()}đ</span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                            <span className="text-slate-300">Tổng chi giả định:</span>
+                            <span className="text-red-400 font-bold">-{totalSimExpense.toLocaleString()}đ</span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                            <span className="text-slate-300 flex items-center gap-1"><CreditCardIcon className="w-3 h-3"/> Trả nợ bắt buộc (Ước tính):</span>
+                            <span className="text-pink-400 font-bold">-{simulatedDebtPayment.toLocaleString()}đ</span>
+                        </div>
+                        <div className="h-px bg-slate-700 my-2"></div>
+                        <div className="flex justify-between items-center">
+                            <span className="font-bold text-white">Dư ra:</span>
+                            <span className={`text-2xl font-bold ${simulatedBalance >= 0 ? 'text-green-400' : 'text-red-500'}`}>{simulatedBalance.toLocaleString()}đ</span>
+                        </div>
+                        {simulatedBalance < 0 && <p className="text-xs text-red-400 text-center mt-2 bg-red-900/20 p-2 rounded">Cảnh báo: Bạn sẽ bị thâm hụt tài chính nếu kế hoạch này diễn ra!</p>}
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 // --- APP COMPONENT ---
 const App: React.FC = () => {
     const [user, setUser] = useState<User | null>(null);
@@ -172,7 +321,7 @@ const App: React.FC = () => {
 
     // --- UI States ---
     const [uiMode, setUiMode] = useState<'desktop' | 'mobile'>(() => (localStorage.getItem(UI_MODE_KEY) as 'desktop' | 'mobile') || 'desktop');
-    const [view, setView] = useState<'dashboard' | 'planning'>('dashboard');
+    const [view, setView] = useState<'dashboard' | 'planning' | 'simulation'>('dashboard');
     const [currentDate] = useState(new Date());
     const [filter, setFilter] = useState<FilterState>({ type: 'week', year: currentDate.getFullYear(), week: getWeekNumber(currentDate)[1] });
     
@@ -464,10 +613,59 @@ const App: React.FC = () => {
         setDebtModalOpen(true); 
     };
     const handleDeleteDebt = (id: string) => { if(confirm("Xóa?")) setDebts(p => p.filter(d => d.id !== id)); setDebtModalOpen(false); };
-    const getFilterDisplay = () => filter.type === 'week' ? `Tuần ${filter.week}` : filter.type === 'month' ? `${MONTH_NAMES[filter.month!]} ${filter.year}` : filter.type === 'year' ? `Năm ${filter.year}` : 'Tất cả';
+    
+    // NEW: Dashboard Filter Navigation Handlers
+    const handlePrevFilter = () => {
+        setFilter(prev => {
+            let { type, year, week, month } = prev;
+            if (type === 'week') {
+                if (week === 1) { year--; week = 52; } else { week!--; }
+                return { ...prev, year, week };
+            } else if (type === 'month') {
+                if (month === 0) { year--; month = 11; } else { month!--; }
+                return { ...prev, year, month };
+            } else {
+                return { ...prev, year: year - 1 };
+            }
+        });
+    };
+
+    const handleNextFilter = () => {
+        setFilter(prev => {
+            let { type, year, week, month } = prev;
+            if (type === 'week') {
+                if (week === 52) { year++; week = 1; } else { week!++; }
+                return { ...prev, year, week };
+            } else if (type === 'month') {
+                if (month === 11) { year++; month = 0; } else { month!++; }
+                return { ...prev, year, month };
+            } else {
+                return { ...prev, year: year + 1 };
+            }
+        });
+    };
+
+    const getFilterDisplay = () => {
+        if (filter.type === 'week') return `Tuần ${filter.week} - Năm ${filter.year}`;
+        if (filter.type === 'month') return `${MONTH_NAMES[filter.month!]} ${filter.year}`;
+        return `Năm ${filter.year}`;
+    };
 
     const renderDashboard = () => (
         <>
+             <div className="mb-4 animate-fade-in-up flex items-center justify-between bg-black/20 p-2 rounded-full border border-white/10">
+                <button onClick={handlePrevFilter} className="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-white"><ArrowRightIcon className="w-4 h-4 rotate-180" /></button>
+                <div className="flex items-center gap-2">
+                    <select value={filter.type} onChange={(e) => setFilter({...filter, type: e.target.value as any})} className="bg-transparent text-sm font-bold text-slate-300 outline-none">
+                        <option value="week" className="bg-slate-900">Theo Tuần</option>
+                        <option value="month" className="bg-slate-900">Theo Tháng</option>
+                        <option value="year" className="bg-slate-900">Theo Năm</option>
+                    </select>
+                    <span className="text-white font-bold text-sm">| {getFilterDisplay()}</span>
+                </div>
+                <button onClick={handleNextFilter} className="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-white"><ArrowRightIcon className="w-4 h-4" /></button>
+             </div>
+
              <div className="mb-6 animate-fade-in-up">
                 <VirtualCard balance={financialStatus} totalSpent={totalActualSpending} theme={seasonalTheme} />
             </div>
@@ -659,10 +857,15 @@ const App: React.FC = () => {
                 <div className="flex gap-4 mb-6 justify-center">
                     <button onClick={() => setView('dashboard')} className={`px-6 py-2 rounded-full font-bold transition-all ${view === 'dashboard' ? 'bg-amber-400 text-slate-900 shadow-lg scale-105' : 'bg-slate-800 text-slate-400'}`}>Tổng quan</button>
                     <button onClick={() => setView('planning')} className={`px-6 py-2 rounded-full font-bold transition-all ${view === 'planning' ? 'bg-purple-500 text-white shadow-lg scale-105' : 'bg-slate-800 text-slate-400'}`}>Kế hoạch</button>
+                    <button onClick={() => setView('simulation')} className={`px-6 py-2 rounded-full font-bold transition-all ${view === 'simulation' ? 'bg-emerald-500 text-white shadow-lg scale-105' : 'bg-slate-800 text-slate-400'}`}>Giả lập</button>
                 </div>
                 {loadingData ? <div className="text-center text-white py-10 animate-pulse">
                     {syncStatus === 'syncing' ? <div className="flex justify-center items-center gap-2"><CloudArrowUpIcon className="animate-bounce"/> Đang đồng bộ...</div> : "Đang tải dữ liệu..."}
-                </div> : (view === 'dashboard' ? renderDashboard() : renderPlanning())}
+                </div> : (
+                    view === 'dashboard' ? renderDashboard() : 
+                    view === 'planning' ? renderPlanning() : 
+                    <SimulationView theme={seasonalTheme} activeDebts={debts.filter(d => d.amountPaid < d.totalAmount)} onClose={() => setView('dashboard')} />
+                )}
                 
                 {/* Sync Status Indicator */}
                 {user && (
