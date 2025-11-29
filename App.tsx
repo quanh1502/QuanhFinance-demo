@@ -100,7 +100,9 @@ const DebtItem: React.FC<DebtItemProps> = ({ debt, onAddPayment, onWithdrawPayme
     const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10));
     const remaining = debt.totalAmount - debt.amountPaid;
     const daysLeft = Math.ceil((debt.dueDate.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
+    // Tính toán số tuần dựa trên thời gian thực tế còn lại
     const weeklyPaymentNeed = remaining > 0 ? remaining / Math.max(1, Math.ceil(daysLeft / 7)) : 0;
+    
     const handleInitiateAdd = () => { if (inputValue > 0) { setIsConfirmingPayment(true); setPaymentDate(new Date().toISOString().slice(0, 10)); } };
     const confirmAddPayment = () => { onAddPayment(debt.id, inputValue, new Date(paymentDate)); setInputValue(0); setIsConfirmingPayment(false); };
     const confirmWithdraw = () => { if (withdrawReason.trim()) { onWithdrawPayment(debt.id, inputValue, withdrawReason); setShowWithdrawReason(false); setWithdrawReason(''); setInputValue(0); } else alert("Cần lý do!"); };
@@ -110,7 +112,9 @@ const DebtItem: React.FC<DebtItemProps> = ({ debt, onAddPayment, onWithdrawPayme
     let statusText = daysLeft < 0 ? `Quá hạn ${Math.abs(daysLeft)} ngày` : daysLeft <= 3 ? `Gấp! Còn ${daysLeft} ngày` : `Còn ${daysLeft} ngày`;
     return (
         <div className={`p-4 rounded-lg shadow-md mb-3 transition-all duration-300 ${daysLeft < 0 ? 'bg-red-900/20 border border-red-500/30' : `${theme.cardBg} border border-slate-700/50`}`}>
-            <div className="flex justify-between items-start"><div className="flex-1 pr-2"><div className="flex items-center gap-2"><h4 className={`font-bold text-lg ${theme.primaryTextColor}`}>{debt.name}</h4><button onClick={() => onEdit(debt)} className="text-xs text-slate-500 hover:text-white p-1 rounded"><EditIcon /></button><button onClick={() => setShowHistory(!showHistory)} className={`text-xs px-2 py-1 rounded transition ${showHistory ? 'bg-blue-500/30 text-blue-200' : 'text-slate-500 hover:text-blue-300'}`}><HistoryIcon className="mr-1"/> Lịch sử</button></div><p className={`text-sm ${theme.secondaryTextColor} flex items-center gap-2`}><TagIcon /> {debt.source}</p><p className={`text-sm ${theme.secondaryTextColor} flex items-center gap-2`}><CalendarIcon/> Hạn: {formatDate(debt.dueDate)}</p></div><div className="text-right"><p className={`font-bold text-xl ${theme.primaryTextColor}`}>{remaining.toLocaleString('vi-VN')}đ</p>{remaining > 0 && <p className="text-xs font-semibold text-pink-400 mt-1 flex justify-end gap-1"><ChartLineIcon className="w-3 h-3" /> ~{Math.round(weeklyPaymentNeed).toLocaleString('vi-VN')}đ/tuần</p>}<div className={`text-sm font-bold flex items-center justify-end gap-1 mt-1 ${statusColor}`}><HourglassIcon className="text-xs"/> {statusText}</div></div></div>
+            <div className="flex justify-between items-start"><div className="flex-1 pr-2"><div className="flex items-center gap-2"><h4 className={`font-bold text-lg ${theme.primaryTextColor}`}>{debt.name}</h4><button onClick={() => onEdit(debt)} className="text-xs text-slate-500 hover:text-white p-1 rounded"><EditIcon /></button><button onClick={() => setShowHistory(!showHistory)} className={`text-xs px-2 py-1 rounded transition ${showHistory ? 'bg-blue-500/30 text-blue-200' : 'text-slate-500 hover:text-blue-300'}`}><HistoryIcon className="mr-1"/> Lịch sử</button></div><p className={`text-sm ${theme.secondaryTextColor} flex items-center gap-2`}><TagIcon /> {debt.source}</p>
+            <p className={`text-xs ${theme.secondaryTextColor} flex items-center gap-2 mt-1`}><CalendarIcon className="w-3 h-3"/> {formatDate(debt.createdAt)} <ArrowRightIcon className="w-3 h-3"/> {formatDate(debt.dueDate)}</p>
+            </div><div className="text-right"><p className={`font-bold text-xl ${theme.primaryTextColor}`}>{remaining.toLocaleString('vi-VN')}đ</p>{remaining > 0 && <p className="text-xs font-semibold text-pink-400 mt-1 flex justify-end gap-1"><ChartLineIcon className="w-3 h-3" /> ~{Math.round(weeklyPaymentNeed).toLocaleString('vi-VN')}đ/tuần</p>}<div className={`text-sm font-bold flex items-center justify-end gap-1 mt-1 ${statusColor}`}><HourglassIcon className="text-xs"/> {statusText}</div></div></div>
             {showHistory && debt.transactions && (<div className="mt-3 mb-3 bg-black/40 rounded p-2 text-xs max-h-32 overflow-y-auto">{debt.transactions.slice().reverse().map(t => (<div key={t.id} className="flex justify-between py-1 border-b border-white/5 last:border-0"><span className="text-slate-400">{formatDate(new Date(t.date))}</span><div className="text-right"><span className={t.type === 'payment' ? 'text-green-400' : 'text-red-400 font-bold'}>{t.type === 'payment' ? '+' : '-'}{t.amount.toLocaleString('vi-VN')}</span></div></div>))}</div>)}
             <div className="mt-4"><div className="w-full bg-slate-700 rounded-full h-2.5"><div className={`${theme.accentColor} h-2.5 rounded-full transition-all duration-500`} style={{ width: `${Math.min((debt.amountPaid / debt.totalAmount) * 100, 100)}%` }}></div></div></div>
             {suggestion && <div className={`mt-3 p-2 rounded text-xs flex items-center gap-2 ${suggestion.bgColor} ${suggestion.color}`}><i className="fa-solid fa-lightbulb"></i><span>{suggestion.text}</span></div>}
@@ -191,7 +195,16 @@ const App: React.FC = () => {
     const [isSavingsHistoryOpen, setSavingsHistoryOpen] = useState(false);
 
     const [debtType, setDebtType] = useState<'standard' | 'shopee'>('standard');
-    const [newDebt, setNewDebt] = useState({ name: '', source: '', totalAmount: 0, dueDate: new Date().toISOString().slice(0, 10), targetMonth: currentDate.getMonth(), targetYear: currentDate.getFullYear() });
+    // [MODIFIED] Added startDate to state
+    const [newDebt, setNewDebt] = useState({ 
+        name: '', 
+        source: '', 
+        totalAmount: 0, 
+        dueDate: new Date().toISOString().slice(0, 10), 
+        startDate: new Date().toISOString().slice(0, 10), // New field for flexible start date
+        targetMonth: currentDate.getMonth(), 
+        targetYear: currentDate.getFullYear() 
+    });
     const [shopeeBillMonth, setShopeeBillMonth] = useState(currentDate.getMonth());
     const [shopeeBillYear, setShopeeBillYear] = useState(currentDate.getFullYear());
     const [isRecurringDebt, setIsRecurringDebt] = useState(false);
@@ -379,7 +392,16 @@ const App: React.FC = () => {
     const handleSaveDebt = (e: React.FormEvent) => {
         e.preventDefault();
         if (editingDebtId) {
-            setDebts(p => p.map(d => d.id === editingDebtId ? { ...d, name: newDebt.name, source: newDebt.source, totalAmount: newDebt.totalAmount, dueDate: new Date(newDebt.dueDate), targetMonth: newDebt.targetMonth, targetYear: newDebt.targetYear } : d));
+            setDebts(p => p.map(d => d.id === editingDebtId ? { 
+                ...d, 
+                name: newDebt.name, 
+                source: newDebt.source, 
+                totalAmount: newDebt.totalAmount, 
+                dueDate: new Date(newDebt.dueDate), 
+                createdAt: new Date(newDebt.startDate), // Update start date (createdAt)
+                targetMonth: newDebt.targetMonth, 
+                targetYear: newDebt.targetYear 
+            } : d));
         } else {
             const list: Debt[] = [];
             if (debtType === 'shopee') {
@@ -409,14 +431,38 @@ const App: React.FC = () => {
                     recurringFrequency === 'weekly' ? cur.setDate(cur.getDate()+7) : cur.setMonth(cur.getMonth()+1); count++;
                 }
             } else {
-                list.push({ id: Date.now().toString(), name: newDebt.name, source: newDebt.source, totalAmount: newDebt.totalAmount, amountPaid: 0, dueDate: new Date(newDebt.dueDate), createdAt: new Date(), targetMonth: newDebt.targetMonth, targetYear: newDebt.targetYear, transactions: [] });
+                list.push({ 
+                    id: Date.now().toString(), 
+                    name: newDebt.name, 
+                    source: newDebt.source, 
+                    totalAmount: newDebt.totalAmount, 
+                    amountPaid: 0, 
+                    dueDate: new Date(newDebt.dueDate), 
+                    createdAt: new Date(newDebt.startDate), // Use custom start date
+                    targetMonth: newDebt.targetMonth, 
+                    targetYear: newDebt.targetYear, 
+                    transactions: [] 
+                });
             }
             setDebts(p => [...p, ...list]);
         }
-        setNewDebt({ name: '', source: '', totalAmount: 0, dueDate: new Date().toISOString().slice(0, 10), targetMonth: currentDate.getMonth(), targetYear: currentDate.getFullYear() });
+        setNewDebt({ name: '', source: '', totalAmount: 0, dueDate: new Date().toISOString().slice(0, 10), startDate: new Date().toISOString().slice(0, 10), targetMonth: currentDate.getMonth(), targetYear: currentDate.getFullYear() });
         setDebtModalOpen(false); setIsRecurringDebt(false); setEditingDebtId(null); setDebtType('standard');
     };
-    const handleEditDebt = (d: Debt) => { setNewDebt({ name: d.name.replace(/\(.*\)/,'').trim(), source: d.source, totalAmount: d.totalAmount, dueDate: d.dueDate.toISOString().slice(0, 10), targetMonth: d.targetMonth!, targetYear: d.targetYear! }); setEditingDebtId(d.id); setDebtType('standard'); setDebtModalOpen(true); };
+    const handleEditDebt = (d: Debt) => { 
+        setNewDebt({ 
+            name: d.name.replace(/\(.*\)/,'').trim(), 
+            source: d.source, 
+            totalAmount: d.totalAmount, 
+            dueDate: d.dueDate.toISOString().slice(0, 10), 
+            startDate: d.createdAt ? d.createdAt.toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10), // Load existing start date
+            targetMonth: d.targetMonth!, 
+            targetYear: d.targetYear! 
+        }); 
+        setEditingDebtId(d.id); 
+        setDebtType('standard'); 
+        setDebtModalOpen(true); 
+    };
     const handleDeleteDebt = (id: string) => { if(confirm("Xóa?")) setDebts(p => p.filter(d => d.id !== id)); setDebtModalOpen(false); };
     const getFilterDisplay = () => filter.type === 'week' ? `Tuần ${filter.week}` : filter.type === 'month' ? `${MONTH_NAMES[filter.month!]} ${filter.year}` : filter.type === 'year' ? `Năm ${filter.year}` : 'Tất cả';
 
@@ -474,7 +520,7 @@ const App: React.FC = () => {
                       <div className={`${seasonalTheme.cardBg} p-5 rounded-lg shadow-lg`}>
                         <div className="flex flex-col md:flex-row md:justify-between md:items-center mb-4 gap-4">
                            <div className="flex items-center gap-2"><h3 className={`text-xl font-bold ${seasonalTheme.primaryTextColor}`}>Nợ cần trả</h3><div className="flex items-center gap-2 bg-black/30 rounded-lg px-3 py-1 border border-slate-700"><select value={debtFilterMonth} onChange={(e) => setDebtFilterMonth(parseInt(e.target.value))} className="bg-transparent text-sm font-semibold text-white outline-none">{MONTH_NAMES.map((m, idx) => <option key={idx} value={idx} className="bg-slate-900">{m}</option>)}</select><input type="number" value={debtFilterYear} onChange={(e) => setDebtFilterYear(parseInt(e.target.value))} className="bg-transparent text-sm font-semibold text-white w-16 outline-none"/></div></div>
-                           <div className="flex gap-2"><button onClick={() => setDebtHistoryOpen(true)} className="px-3 py-2 text-sm font-semibold text-slate-300 bg-slate-800 rounded-lg flex items-center gap-1"><HistoryIcon /> Lịch sử</button><button onClick={() => { setNewDebt({ name: '', source: '', totalAmount: 0, dueDate: new Date().toISOString().slice(0, 10), targetMonth: debtFilterMonth, targetYear: debtFilterYear }); setEditingDebtId(null); setIsRecurringDebt(false); setDebtModalOpen(true); }} className={`px-4 py-2 text-sm font-semibold text-slate-900 rounded-lg shadow-md ${seasonalTheme.accentColor}`}><PlusIcon className="inline mr-1"/> Thêm</button></div>
+                           <div className="flex gap-2"><button onClick={() => setDebtHistoryOpen(true)} className="px-3 py-2 text-sm font-semibold text-slate-300 bg-slate-800 rounded-lg flex items-center gap-1"><HistoryIcon /> Lịch sử</button><button onClick={() => { setNewDebt({ name: '', source: '', totalAmount: 0, dueDate: new Date().toISOString().slice(0, 10), startDate: new Date().toISOString().slice(0, 10), targetMonth: debtFilterMonth, targetYear: debtFilterYear }); setEditingDebtId(null); setIsRecurringDebt(false); setDebtModalOpen(true); }} className={`px-4 py-2 text-sm font-semibold text-slate-900 rounded-lg shadow-md ${seasonalTheme.accentColor}`}><PlusIcon className="inline mr-1"/> Thêm</button></div>
                         </div>
                         <div className="max-h-[70vh] overflow-y-auto pr-2">
                             {displayDebts.length > 0 ? displayDebts.map(d => <DebtItem key={d.id} debt={d} onAddPayment={handleAddPayment} onWithdrawPayment={handleWithdrawPayment} onEdit={handleEditDebt} theme={seasonalTheme} disposableIncome={disposableIncomeForDebts} />) : <div className={`text-center ${seasonalTheme.secondaryTextColor} py-8 border-2 border-dashed border-slate-700 rounded-xl`}>Không có khoản nợ nào tháng này.</div>}
@@ -631,7 +677,7 @@ const App: React.FC = () => {
                 
                 {manualEntryModal.isOpen && <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"><div className="bg-slate-900 border border-slate-700 rounded-xl p-6 w-full max-w-sm"><h3 className="text-lg font-bold text-white mb-4">Cập nhật lịch sử</h3><input type="date" value={manualDate} onChange={(e) => setManualDate(e.target.value)} className="input w-full mb-4" /><div className="flex justify-end gap-2"><button onClick={() => setManualEntryModal({isOpen: false, type: null})} className="px-3 py-1.5 rounded bg-slate-700 text-slate-300">Hủy</button><button onClick={handleSaveManualEntry} className="px-3 py-1.5 rounded bg-amber-500 text-slate-900 font-bold">Lưu</button></div></div></div>}
                 
-                {isDebtModalOpen && <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"><div className="bg-slate-900 border border-slate-700 rounded-xl p-6 w-full max-w-md max-h-[90vh] overflow-y-auto"><form onSubmit={handleSaveDebt}><h3 className="text-2xl font-bold mb-4">{editingDebtId ? "Sửa nợ" : "Thêm nợ"}</h3>{!editingDebtId && <div className="flex border-b border-slate-700 mb-4"><button type="button" onClick={() => setDebtType('standard')} className={`flex-1 py-2 ${debtType==='standard'?'text-amber-400 border-b-2 border-amber-400':'text-slate-400'}`}>Thường</button><button type="button" onClick={() => setDebtType('shopee')} className={`flex-1 py-2 ${debtType==='shopee'?'text-orange-500 border-b-2 border-orange-500':'text-slate-400'}`}>Shopee</button></div>}{debtType === 'standard' ? <div className="space-y-4"><div><label className="text-sm text-slate-300">Tên</label><input type="text" value={newDebt.name} onChange={e=>setNewDebt({...newDebt,name:e.target.value})} className="input w-full" required/></div><div><label className="text-sm text-slate-300">Nguồn</label><input type="text" value={newDebt.source} onChange={e=>setNewDebt({...newDebt,source:e.target.value})} className="input w-full" required/></div>{!editingDebtId && <div className="flex items-center gap-2"><input type="checkbox" checked={isRecurringDebt} onChange={e=>setIsRecurringDebt(e.target.checked)}/><label>Trả góp/Lặp lại</label></div>}<div><label className="text-sm text-slate-300">Ngày hạn/Bắt đầu</label><input type="date" value={newDebt.dueDate} onChange={e=>setNewDebt({...newDebt,dueDate:e.target.value})} className="input w-full" required/></div>{isRecurringDebt && <div className="p-3 bg-amber-900/20 rounded border border-amber-500/30 space-y-2"><select value={recurringFrequency} onChange={e=>setRecurringFrequency(e.target.value as any)} className="input w-full"><option value="monthly">Tháng</option><option value="weekly">Tuần</option></select><input type="date" value={recurringEndDate} onChange={e=>setRecurringEndDate(e.target.value)} className="input w-full" required/></div>}<div><label className="text-sm text-slate-300">Số tiền</label><CurrencyInput value={newDebt.totalAmount} onValueChange={v=>setNewDebt({...newDebt,totalAmount:v})} className="input w-full" required/></div>{!isRecurringDebt && <div className="flex gap-2 mt-2"><select value={newDebt.targetMonth} onChange={e=>setNewDebt({...newDebt,targetMonth:parseInt(e.target.value)})} className="input flex-1">{MONTH_NAMES.map((m,i)=><option key={i} value={i} className="text-black">{m}</option>)}</select><input type="number" value={newDebt.targetYear} onChange={e=>setNewDebt({...newDebt,targetYear:parseInt(e.target.value)})} className="input w-24"/></div>}</div> : <div className="space-y-4"><div className="flex justify-between items-center mb-2"><label className="text-sm text-slate-300">Năm hóa đơn</label><input type="number" value={shopeeBillYear} onChange={(e) => setShopeeBillYear(parseInt(e.target.value))} className="input w-24 text-center bg-slate-800 text-white border border-slate-600 rounded" /></div><div><label className="text-sm text-slate-300 block mb-2">Tháng</label><div className="grid grid-cols-6 gap-1">{MONTH_NAMES.map((m, i) => (<button type="button" key={i} onClick={() => setShopeeBillMonth(i)} className={`p-1 text-xs rounded ${shopeeBillMonth === i ? 'bg-orange-500 text-white' : 'bg-slate-700 text-slate-400'}`}>T{i + 1}</button>))}</div></div><div><label className="text-sm text-slate-300">Số tiền</label><CurrencyInput value={newDebt.totalAmount} onValueChange={v=>setNewDebt({...newDebt,totalAmount:v})} className="input w-full"/></div></div>}<div className="mt-6 flex justify-end gap-3">{editingDebtId && <button type="button" onClick={()=>handleDeleteDebt(editingDebtId)} className="text-red-400 mr-auto"><TrashIcon/> Xóa</button>}<button type="button" onClick={()=>setDebtModalOpen(false)} className="text-slate-300">Hủy</button><button type="submit" className="bg-amber-500 text-slate-900 px-4 py-2 rounded font-bold">Lưu</button></div></form></div></div>}
+                {isDebtModalOpen && <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"><div className="bg-slate-900 border border-slate-700 rounded-xl p-6 w-full max-w-md max-h-[90vh] overflow-y-auto"><form onSubmit={handleSaveDebt}><h3 className="text-2xl font-bold mb-4">{editingDebtId ? "Sửa nợ" : "Thêm nợ"}</h3>{!editingDebtId && <div className="flex border-b border-slate-700 mb-4"><button type="button" onClick={() => setDebtType('standard')} className={`flex-1 py-2 ${debtType==='standard'?'text-amber-400 border-b-2 border-amber-400':'text-slate-400'}`}>Thường</button><button type="button" onClick={() => setDebtType('shopee')} className={`flex-1 py-2 ${debtType==='shopee'?'text-orange-500 border-b-2 border-orange-500':'text-slate-400'}`}>Shopee</button></div>}{debtType === 'standard' ? <div className="space-y-4"><div><label className="text-sm text-slate-300">Tên</label><input type="text" value={newDebt.name} onChange={e=>setNewDebt({...newDebt,name:e.target.value})} className="input w-full" required/></div><div><label className="text-sm text-slate-300">Nguồn</label><input type="text" value={newDebt.source} onChange={e=>setNewDebt({...newDebt,source:e.target.value})} className="input w-full" required/></div>{!editingDebtId && <div className="flex items-center gap-2"><input type="checkbox" checked={isRecurringDebt} onChange={e=>setIsRecurringDebt(e.target.checked)}/><label>Trả góp/Lặp lại</label></div>}<div><label className="text-sm text-slate-300">Ngày vay/Bắt đầu</label><input type="date" value={newDebt.startDate} onChange={e=>setNewDebt({...newDebt,startDate:e.target.value})} className="input w-full" required/></div><div><label className="text-sm text-slate-300">Ngày tất toán/Hạn trả</label><input type="date" value={newDebt.dueDate} onChange={e=>setNewDebt({...newDebt,dueDate:e.target.value})} className="input w-full" required/></div>{isRecurringDebt && <div className="p-3 bg-amber-900/20 rounded border border-amber-500/30 space-y-2"><select value={recurringFrequency} onChange={e=>setRecurringFrequency(e.target.value as any)} className="input w-full"><option value="monthly">Tháng</option><option value="weekly">Tuần</option></select><input type="date" value={recurringEndDate} onChange={e=>setRecurringEndDate(e.target.value)} className="input w-full" required/></div>}<div><label className="text-sm text-slate-300">Số tiền</label><CurrencyInput value={newDebt.totalAmount} onValueChange={v=>setNewDebt({...newDebt,totalAmount:v})} className="input w-full" required/></div>{!isRecurringDebt && <div className="flex gap-2 mt-2"><select value={newDebt.targetMonth} onChange={e=>setNewDebt({...newDebt,targetMonth:parseInt(e.target.value)})} className="input flex-1">{MONTH_NAMES.map((m,i)=><option key={i} value={i} className="text-black">{m}</option>)}</select><input type="number" value={newDebt.targetYear} onChange={e=>setNewDebt({...newDebt,targetYear:parseInt(e.target.value)})} className="input w-24"/></div>}</div> : <div className="space-y-4"><div className="flex justify-between items-center mb-2"><label className="text-sm text-slate-300">Năm hóa đơn</label><input type="number" value={shopeeBillYear} onChange={(e) => setShopeeBillYear(parseInt(e.target.value))} className="input w-24 text-center bg-slate-800 text-white border border-slate-600 rounded" /></div><div><label className="text-sm text-slate-300 block mb-2">Tháng</label><div className="grid grid-cols-6 gap-1">{MONTH_NAMES.map((m, i) => (<button type="button" key={i} onClick={() => setShopeeBillMonth(i)} className={`p-1 text-xs rounded ${shopeeBillMonth === i ? 'bg-orange-500 text-white' : 'bg-slate-700 text-slate-400'}`}>T{i + 1}</button>))}</div></div><div><label className="text-sm text-slate-300">Số tiền</label><CurrencyInput value={newDebt.totalAmount} onValueChange={v=>setNewDebt({...newDebt,totalAmount:v})} className="input w-full"/></div></div>}<div className="mt-6 flex justify-end gap-3">{editingDebtId && <button type="button" onClick={()=>handleDeleteDebt(editingDebtId)} className="text-red-400 mr-auto"><TrashIcon/> Xóa</button>}<button type="button" onClick={()=>setDebtModalOpen(false)} className="text-slate-300">Hủy</button><button type="submit" className="bg-amber-500 text-slate-900 px-4 py-2 rounded font-bold">Lưu</button></div></form></div></div>}
                 
                 {isSavingsHistoryOpen && (
                     <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
