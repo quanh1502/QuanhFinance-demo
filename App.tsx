@@ -202,6 +202,8 @@ const App: React.FC = () => {
     // --- FIX RACE CONDITION START ---
     // Ref này dùng để chặn onSnapshot ghi đè dữ liệu khi đang có thay đổi chưa lưu
     const isPendingSave = useRef(false);
+    // [NEW] Ref này dùng để đánh dấu lần update này là từ Server, để chặn useEffect không save ngược lại
+    const isRemoteUpdate = useRef(false);
 
     // --- AUTH & DATA SYNC (UPDATED) ---
     useEffect(() => {
@@ -216,11 +218,19 @@ const App: React.FC = () => {
                     if (localData) await setDoc(docRef, { ...localData, updatedAt: new Date().toISOString() });
                 }
 
-                const unsubDoc = onSnapshot(docRef, (doc) => {
-                    // [QUAN TRỌNG] Nếu đang chờ lưu (isPendingSave = true), BỎ QUA cập nhật từ server
+                // Kích hoạt metadataChanges để bắt được các thay đổi "local pending"
+                const unsubDoc = onSnapshot(docRef, { includeMetadataChanges: true }, (doc) => {
+                    // [QUAN TRỌNG 1] Nếu người dùng đang gõ/đang lưu, không nhận update để tránh nhảy chữ
                     if (isPendingSave.current) return;
 
+                    // [QUAN TRỌNG 2] hasPendingWrites = true nghĩa là đây là dữ liệu LOCAL vừa gửi đi
+                    // Chúng ta đã có dữ liệu này rồi (Optimistic UI), nên không cần update lại state.
+                    if (doc.metadata.hasPendingWrites) return;
+
                     if (doc.exists()) {
+                        // Đánh dấu đây là cập nhật từ Server
+                        isRemoteUpdate.current = true;
+
                         const data = doc.data();
                         const parsed = parseDataDates(data);
                         setGasHistory(parsed.gasHistory || []);
@@ -270,6 +280,13 @@ const App: React.FC = () => {
         if (isFirstRun.current) { isFirstRun.current = false; return; }
         if (loadingData) return;
 
+        // [QUAN TRỌNG 3] Nếu đây là update do onSnapshot (từ server) kích hoạt, 
+        // thì KHÔNG được lưu ngược lại server. Reset cờ và thoát.
+        if (isRemoteUpdate.current) {
+            isRemoteUpdate.current = false;
+            return;
+        }
+
         const dataToSave = { gasHistory, lastWifiPayment, debts, incomeLogs, foodLogs, miscLogs, savingsHistory, foodBudget, miscBudget, holidays };
         
         // Lưu LocalStorage
@@ -278,7 +295,7 @@ const App: React.FC = () => {
         if (user) {
             setSyncStatus('syncing');
             
-            // [QUAN TRỌNG] Đánh dấu là đang có thay đổi chưa lưu lên Server
+            // Đánh dấu là đang có thay đổi LOCAL
             isPendingSave.current = true;
 
             const timeoutId = setTimeout(async () => {
@@ -288,7 +305,7 @@ const App: React.FC = () => {
                     
                     setSyncStatus('saved');
                     
-                    // [QUAN TRỌNG] Bỏ cờ hiệu sau khi lưu thành công (delay 500ms để đảm bảo an toàn)
+                    // Delay ngắn để đảm bảo không xung đột với snapshot ack
                     setTimeout(() => {
                         isPendingSave.current = false;
                     }, 500);
