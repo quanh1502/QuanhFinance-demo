@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Debt, FilterState, GasLog, SeasonalTheme, ExpenseLog, DebtTransaction, IncomeLog, FoodLog, Holiday, SavingsTransaction } from './types';
-import { TaurusIcon, StarIcon, SnowflakeIcon, FilterIcon, GasPumpIcon, WifiIcon, FoodIcon, PiggyBankIcon, TargetIcon, ChartLineIcon, WarningIcon, PlusIcon, CheckIcon, CalendarIcon, TagIcon, MoneyBillIcon, BoltIcon, SaveIcon, CircleIcon, CheckCircleIcon, HistoryIcon, HourglassIcon, CloseIcon, ListIcon, TrashIcon, CreditCardIcon, RepeatIcon, EditIcon, ShoppingBagIcon, MinusIcon, CalendarPlusIcon, PlaneIcon, WalletIcon, SunIcon, ArrowRightIcon, ExchangeIcon } from './components/icons';
-import { formatDate, formatDateTime, daysBetween, getWeekNumber, getWeekRange, isDateInFilter, MONTH_NAMES, getUpcomingHolidays } from './utils/date';
+import { Debt, FilterState, GasLog, SeasonalTheme, ExpenseLog, IncomeLog, FoodLog, Holiday, SavingsTransaction } from './types';
+import { TaurusIcon, StarIcon, SnowflakeIcon, FilterIcon, GasPumpIcon, WifiIcon, FoodIcon, PiggyBankIcon, TargetIcon, ChartLineIcon, WarningIcon, PlusIcon, CheckIcon, CalendarIcon, TagIcon, MoneyBillIcon, BoltIcon, SaveIcon, CircleIcon, CheckCircleIcon, HistoryIcon, HourglassIcon, CloseIcon, ListIcon, TrashIcon, CreditCardIcon, RepeatIcon, EditIcon, ShoppingBagIcon, MinusIcon, CalendarPlusIcon, PlaneIcon, WalletIcon, SunIcon, ArrowRightIcon, ExchangeIcon, CloudArrowUpIcon, CloudArrowDownIcon } from './components/icons';
+import { formatDate, formatDateTime, daysBetween, getWeekNumber, isDateInFilter, MONTH_NAMES, getUpcomingHolidays } from './utils/date';
 import Header from './components/Header';
 import FilterModal from './components/FilterModal';
 import { sadDogImageBase64 } from './assets/sadDogImage';
@@ -16,27 +16,46 @@ import { auth, googleProvider, db } from "./firebase";
 const STORAGE_KEY = 'spending_app_data_v1';
 const UI_MODE_KEY = 'spending_app_ui_mode';
 
-// Helper parse date
+// --- HELPER: Xử lý ngày tháng an toàn tuyệt đối ---
+const safeDate = (d: any): Date => {
+    if (!d) return new Date();
+    if (d instanceof Date) return d;
+    // Xử lý Timestamp của Firestore
+    if (typeof d === 'object' && 'seconds' in d) {
+        return new Date(d.seconds * 1000); 
+    }
+    // Xử lý chuỗi ISO
+    return new Date(d);
+};
+
+// --- HELPER: Làm sạch dữ liệu trước khi lưu (Loại bỏ undefined) ---
+const sanitizeForFirestore = (obj: any): any => {
+    return JSON.parse(JSON.stringify(obj));
+};
+
+// --- HELPER: Parse dữ liệu từ DB về App ---
 const parseDataDates = (data: any) => {
-    const parseDate = (d: string | Date) => d ? new Date(d) : new Date();
     if (!data) return {};
+    const parsed = { ...data };
+
+    if (parsed.gasHistory) parsed.gasHistory = parsed.gasHistory.map((x: any) => ({ ...x, date: safeDate(x.date) }));
+    if (parsed.lastWifiPayment) parsed.lastWifiPayment = safeDate(parsed.lastWifiPayment);
+    if (parsed.incomeLogs) parsed.incomeLogs = parsed.incomeLogs.map((x: any) => ({ ...x, date: safeDate(x.date) }));
+    if (parsed.foodLogs) parsed.foodLogs = parsed.foodLogs.map((x: any) => ({ ...x, date: safeDate(x.date) }));
+    if (parsed.miscLogs) parsed.miscLogs = parsed.miscLogs.map((x: any) => ({ ...x, date: safeDate(x.date) }));
+    if (parsed.savingsHistory) parsed.savingsHistory = parsed.savingsHistory.map((x: any) => ({ ...x, date: safeDate(x.date) }));
     
-    if (data.gasHistory) data.gasHistory.forEach((x: any) => x.date = parseDate(x.date));
-    if (data.lastWifiPayment) data.lastWifiPayment = parseDate(data.lastWifiPayment);
-    if (data.incomeLogs) data.incomeLogs.forEach((x: any) => x.date = parseDate(x.date));
-    if (data.foodLogs) data.foodLogs.forEach((x: any) => x.date = parseDate(x.date));
-    if (data.miscLogs) data.miscLogs.forEach((x: any) => x.date = parseDate(x.date));
-    if (data.savingsHistory) data.savingsHistory.forEach((x: any) => x.date = parseDate(x.date));
-    if (data.debts) {
-        data.debts = data.debts.map((d: any) => ({
+    if (parsed.debts) {
+        parsed.debts = parsed.debts.map((d: any) => ({
             ...d,
-            dueDate: parseDate(d.dueDate),
-            createdAt: parseDate(d.createdAt),
-            transactions: d.transactions?.map((t: any) => ({ ...t, date: parseDate(t.date) })) || []
+            dueDate: safeDate(d.dueDate),
+            createdAt: safeDate(d.createdAt),
+            transactions: d.transactions?.map((t: any) => ({ ...t, date: safeDate(t.date) })) || []
         }));
     }
-    if (data.holidays) data.holidays.forEach((x: any) => x.date = parseDate(x.date));
-    return data;
+    if (parsed.holidays) parsed.holidays = parsed.holidays.map((x: any) => ({ ...x, date: safeDate(x.date) }));
+
+    return parsed;
 }
 
 const loadLocalData = () => {
@@ -47,8 +66,7 @@ const loadLocalData = () => {
     } catch (e) { return null; }
 };
 
-// --- INLINE COMPONENTS (Định nghĩa tại đây để đảm bảo logic mới nhất) ---
-
+// --- INLINE COMPONENTS ---
 interface CurrencyInputProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'> {
     value: number;
     onValueChange: (value: number) => void;
@@ -71,7 +89,7 @@ const CurrencyInput: React.FC<CurrencyInputProps> = ({ value, onValueChange, cla
 
 interface StatCardProps { icon: React.ReactNode; title: string; value: string; color: string; subtitle?: string; theme: SeasonalTheme; action?: React.ReactNode; }
 const StatCard: React.FC<StatCardProps> = ({ icon, title, value, color, subtitle, theme, action }) => (
-    <div className={`${theme.cardBg} p-4 rounded-lg shadow-md flex items-center justify-between`}>
+    <div className={`${theme.cardBg} p-4 rounded-lg shadow-md flex items-center justify-between transition-all duration-300`}>
         <div className="flex items-center"><div className={`mr-4 text-3xl ${color}`}>{icon}</div><div><p className={`text-sm ${theme.secondaryTextColor}`}>{title}</p><p className={`text-xl font-bold ${theme.primaryTextColor}`}>{value}</p>{subtitle && <p className={`text-xs ${theme.secondaryTextColor}`}>{subtitle}</p>}</div></div>{action && <div>{action}</div>}
     </div>
 );
@@ -84,25 +102,16 @@ const DebtItem: React.FC<DebtItemProps> = ({ debt, onAddPayment, onWithdrawPayme
     const [showHistory, setShowHistory] = useState(false);
     const [isConfirmingPayment, setIsConfirmingPayment] = useState(false);
     const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10));
-
     const remaining = debt.totalAmount - debt.amountPaid;
     const daysLeft = Math.ceil((debt.dueDate.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
     const weeklyPaymentNeed = remaining > 0 ? remaining / Math.max(1, Math.ceil(daysLeft / 7)) : 0;
-
     const handleInitiateAdd = () => { if (inputValue > 0) { setIsConfirmingPayment(true); setPaymentDate(new Date().toISOString().slice(0, 10)); } };
     const confirmAddPayment = () => { onAddPayment(debt.id, inputValue, new Date(paymentDate)); setInputValue(0); setIsConfirmingPayment(false); };
     const confirmWithdraw = () => { if (withdrawReason.trim()) { onWithdrawPayment(debt.id, inputValue, withdrawReason); setShowWithdrawReason(false); setWithdrawReason(''); setInputValue(0); } else alert("Cần lý do!"); };
-
-    const getSmartSuggestion = () => {
-        if (remaining <= 0) return null;
-        if (disposableIncome <= 0) return { text: "Thu nhập thấp, tạm ngưng.", color: "text-slate-400", bgColor: "bg-slate-700/50" };
-        if (disposableIncome > weeklyPaymentNeed * 2) return { text: "Dư dả! Tăng mức góp.", color: "text-green-300", bgColor: "bg-green-900/30" };
-        return { text: "Tiếp tục theo kế hoạch.", color: "text-blue-300", bgColor: "bg-blue-900/30" };
-    };
+    const getSmartSuggestion = () => { if (remaining <= 0) return null; if (disposableIncome <= 0) return { text: "Thu nhập thấp, tạm ngưng.", color: "text-slate-400", bgColor: "bg-slate-700/50" }; if (disposableIncome > weeklyPaymentNeed * 2) return { text: "Dư dả! Tăng mức góp.", color: "text-green-300", bgColor: "bg-green-900/30" }; return { text: "Tiếp tục theo kế hoạch.", color: "text-blue-300", bgColor: "bg-blue-900/30" }; };
     const suggestion = getSmartSuggestion();
     let statusColor = daysLeft < 0 ? 'text-red-400' : daysLeft <= 3 ? 'text-orange-400' : 'text-green-400';
     let statusText = daysLeft < 0 ? `Quá hạn ${Math.abs(daysLeft)} ngày` : daysLeft <= 3 ? `Gấp! Còn ${daysLeft} ngày` : `Còn ${daysLeft} ngày`;
-
     return (
         <div className={`p-4 rounded-lg shadow-md mb-3 transition-all duration-300 ${daysLeft < 0 ? 'bg-red-900/20 border border-red-500/30' : `${theme.cardBg} border border-slate-700/50`}`}>
             <div className="flex justify-between items-start"><div className="flex-1 pr-2"><div className="flex items-center gap-2"><h4 className={`font-bold text-lg ${theme.primaryTextColor}`}>{debt.name}</h4><button onClick={() => onEdit(debt)} className="text-xs text-slate-500 hover:text-white p-1 rounded"><EditIcon /></button><button onClick={() => setShowHistory(!showHistory)} className={`text-xs px-2 py-1 rounded transition ${showHistory ? 'bg-blue-500/30 text-blue-200' : 'text-slate-500 hover:text-blue-300'}`}><HistoryIcon className="mr-1"/> Lịch sử</button></div><p className={`text-sm ${theme.secondaryTextColor} flex items-center gap-2`}><TagIcon /> {debt.source}</p><p className={`text-sm ${theme.secondaryTextColor} flex items-center gap-2`}><CalendarIcon/> Hạn: {formatDate(debt.dueDate)}</p></div><div className="text-right"><p className={`font-bold text-xl ${theme.primaryTextColor}`}>{remaining.toLocaleString('vi-VN')}đ</p>{remaining > 0 && <p className="text-xs font-semibold text-pink-400 mt-1 flex justify-end gap-1"><ChartLineIcon className="w-3 h-3" /> ~{Math.round(weeklyPaymentNeed).toLocaleString('vi-VN')}đ/tuần</p>}<div className={`text-sm font-bold flex items-center justify-end gap-1 mt-1 ${statusColor}`}><HourglassIcon className="text-xs"/> {statusText}</div></div></div>
@@ -147,6 +156,7 @@ const BudgetRow: React.FC<BudgetRowProps> = ({ icon, label, budget, actual, onBu
 const App: React.FC = () => {
     const [user, setUser] = useState<User | null>(null);
     const [loadingData, setLoadingData] = useState(true);
+    const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'saved'>('idle'); // Trạng thái đồng bộ
 
     // --- Data States ---
     const [gasHistory, setGasHistory] = useState<GasLog[]>([]);
@@ -156,6 +166,7 @@ const App: React.FC = () => {
     const [foodLogs, setFoodLogs] = useState<FoodLog[]>([]);
     const [miscLogs, setMiscLogs] = useState<ExpenseLog[]>([]);
     const [savingsHistory, setSavingsHistory] = useState<SavingsTransaction[]>([]);
+    
     const [foodBudget, setFoodBudget] = useState<number>(315000);
     const [miscBudget, setMiscBudget] = useState<number>(100000);
     const [holidays, setHolidays] = useState<Holiday[]>([]);
@@ -181,7 +192,7 @@ const App: React.FC = () => {
     const [isIncomeEditOpen, setIncomeEditOpen] = useState(false);
     const [editingIncomeId, setEditingIncomeId] = useState<string | null>(null);
     const [editIncomeValue, setEditIncomeValue] = useState<number>(0);
-    const [editIncomeDate, setEditIncomeDate] = useState<string>('');
+    const [editIncomeDate, setEditIncomeDate] = useState<string>(''); 
     const [isSavingsHistoryOpen, setSavingsHistoryOpen] = useState(false);
 
     const [debtType, setDebtType] = useState<'standard' | 'shopee'>('standard');
@@ -193,43 +204,62 @@ const App: React.FC = () => {
     const [recurringEndDate, setRecurringEndDate] = useState('');
     const [newMiscLog, setNewMiscLog] = useState({ name: '', amount: 0, date: new Date().toISOString().slice(0, 10) });
 
-    // --- AUTH & DATA SYNC ---
+    // --- 3. AUTH & DATA SYNC LOGIC ---
+    
+    // A. Lắng nghe User & Realtime DB
     useEffect(() => {
         const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
             setUser(currentUser);
+            
             if (currentUser) {
+                // 1. Đăng nhập thành công -> Kết nối Firestore
                 const docRef = doc(db, "users", currentUser.uid);
-                const docSnap = await getDoc(docRef);
-                if (!docSnap.exists()) {
-                    const localData = loadLocalData();
-                    if (localData) await setDoc(docRef, { ...localData, updatedAt: new Date().toISOString() });
-                }
-                const unsubDoc = onSnapshot(docRef, (doc) => {
-                    if (doc.exists()) {
-                        const data = doc.data();
+                
+                // 2. Lắng nghe thay đổi từ Server (Realtime)
+                const unsubSnapshot = onSnapshot(docRef, (docSnap) => {
+                    if (docSnap.exists()) {
+                        const data = docSnap.data();
+                        console.log("🔥 Dữ liệu mới từ Cloud:", data);
+                        
                         const parsed = parseDataDates(data);
-                        setGasHistory(parsed.gasHistory || []);
-                        setLastWifiPayment(parsed.lastWifiPayment || null);
-                        setDebts(parsed.debts || []);
-                        setIncomeLogs(parsed.incomeLogs || []);
-                        setFoodLogs(parsed.foodLogs || []);
-                        setMiscLogs(parsed.miscLogs || []);
-                        setSavingsHistory(parsed.savingsHistory || []);
-                        setFoodBudget(parsed.foodBudget || 315000);
-                        setMiscBudget(parsed.miscBudget || 100000);
-                        const upcoming = getUpcomingHolidays();
-                        if (parsed.holidays) {
-                            const merged = upcoming.map(freshH => {
-                                const savedH = parsed.holidays.find((s: any) => s.id === freshH.id);
-                                return savedH ? { ...freshH, ...savedH } : freshH;
-                            });
-                            setHolidays(merged);
-                        } else { setHolidays(upcoming); }
+                        if (parsed) {
+                            // Cập nhật State từ Cloud về
+                            setGasHistory(parsed.gasHistory || []);
+                            setLastWifiPayment(parsed.lastWifiPayment || null);
+                            setDebts(parsed.debts || []);
+                            setIncomeLogs(parsed.incomeLogs || []);
+                            setFoodLogs(parsed.foodLogs || []);
+                            setMiscLogs(parsed.miscLogs || []);
+                            setSavingsHistory(parsed.savingsHistory || []);
+                            setFoodBudget(parsed.foodBudget || 315000);
+                            setMiscBudget(parsed.miscBudget || 100000);
+                            
+                            const upcoming = getUpcomingHolidays();
+                            if (parsed.holidays) {
+                                const merged = upcoming.map(freshH => {
+                                    const savedH = parsed.holidays.find((s: any) => s.id === freshH.id);
+                                    return savedH ? { ...freshH, ...savedH } : freshH;
+                                });
+                                setHolidays(merged);
+                            } else {
+                                setHolidays(upcoming);
+                            }
+                        }
+                    } else {
+                        // MIGRATION: Nếu chưa có data trên mây, đẩy local lên
+                        const localData = loadLocalData();
+                        if (localData && Object.keys(localData).length > 0) {
+                            console.log("🚀 Migrating Local -> Cloud");
+                            setDoc(docRef, { ...sanitizeForFirestore(localData), updatedAt: new Date().toISOString() });
+                        }
                     }
-                    setLoadingData(false);
+                    setLoadingData(false); // Cho phép App hiển thị
                 });
-                return () => unsubDoc();
+
+                return () => unsubSnapshot();
+
             } else {
+                // Chế độ khách: Dùng LocalStorage
                 const localData = loadLocalData();
                 if (localData) {
                     setGasHistory(localData.gasHistory || []);
@@ -249,30 +279,56 @@ const App: React.FC = () => {
         return () => unsubscribe();
     }, []);
 
+    // B. Tự động Lưu (Auto-Save)
     const isFirstRun = useRef(true);
+    
     useEffect(() => {
-        if (isFirstRun.current) { isFirstRun.current = false; return; }
+        // Bỏ qua lần render đầu tiên
+        if (isFirstRun.current) {
+            isFirstRun.current = false;
+            return;
+        }
+        // Bỏ qua nếu đang tải dữ liệu từ Cloud về (tránh ghi đè ngược)
         if (loadingData) return;
-        const dataToSave = { gasHistory, lastWifiPayment, debts, incomeLogs, foodLogs, miscLogs, savingsHistory, foodBudget, miscBudget, holidays };
+
+        const dataToSave = { 
+            gasHistory, lastWifiPayment, debts, incomeLogs, foodLogs, 
+            miscLogs, savingsHistory, foodBudget, miscBudget, holidays 
+        };
+
+        // 1. Luôn lưu LocalStorage (Backup)
         localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));
-        const timeoutId = setTimeout(async () => {
-            if (user) {
+
+        // 2. Nếu có mạng & user -> Lưu lên Cloud
+        if (user) {
+            setSyncStatus('syncing');
+            const timeoutId = setTimeout(async () => {
                 try {
                     const docRef = doc(db, "users", user.uid);
-                    await setDoc(docRef, { ...dataToSave, updatedAt: new Date() }, { merge: true });
-                    console.log("Đã đồng bộ lên Firebase");
-                } catch (e) { console.error("Lỗi đồng bộ:", e); }
-            }
-        }, 2000);
-        return () => clearTimeout(timeoutId);
+                    // Sanitize để xóa undefined
+                    const cleanData = sanitizeForFirestore(dataToSave);
+                    
+                    await setDoc(docRef, { ...cleanData, updatedAt: new Date().toISOString() }, { merge: true });
+                    console.log("✅ Saved to Cloud");
+                    setSyncStatus('saved');
+                    setTimeout(() => setSyncStatus('idle'), 2000);
+                } catch (e) {
+                    console.error("❌ Save Error:", e);
+                    setSyncStatus('idle');
+                }
+            }, 2000); // Debounce 2s
+
+            return () => clearTimeout(timeoutId);
+        }
     }, [gasHistory, lastWifiPayment, debts, incomeLogs, foodLogs, miscLogs, savingsHistory, foodBudget, miscBudget, holidays, user, loadingData]);
 
     useEffect(() => { localStorage.setItem(UI_MODE_KEY, uiMode); }, [uiMode]);
 
-    const handleLogin = async () => { try { await signInWithPopup(auth, googleProvider); } catch (error: any) { alert("Lỗi đăng nhập: " + error.message); } };
-    const handleLogout = async () => { if(confirm("Bạn muốn đăng xuất?")) { await signOut(auth); window.location.reload(); } };
+    const handleLogin = async () => { try { await signInWithPopup(auth, googleProvider); } catch (error: any) { alert("Lỗi: " + error.message); } };
+    const handleLogout = async () => { if(confirm("Đăng xuất?")) { await signOut(auth); window.location.reload(); } };
 
-    // Computed
+    // --- Computed Values & Logic ---
+    // (Giữ nguyên logic tính toán)
     const seasonalTheme = useMemo<SeasonalTheme>(() => {
         const month = currentDate.getMonth();
         const greetingName = user ? user.displayName?.split(' ').pop() : 'bạn';
@@ -438,8 +494,17 @@ const App: React.FC = () => {
                     <button onClick={() => setView('dashboard')} className={`px-6 py-2 rounded-full font-bold transition-all ${view === 'dashboard' ? 'bg-amber-400 text-slate-900 shadow-lg scale-105' : 'bg-slate-800 text-slate-400'}`}>Tổng quan</button>
                     <button onClick={() => setView('planning')} className={`px-6 py-2 rounded-full font-bold transition-all ${view === 'planning' ? 'bg-purple-500 text-white shadow-lg scale-105' : 'bg-slate-800 text-slate-400'}`}>Kế hoạch</button>
                 </div>
-                {loadingData ? <div className="text-center text-white py-10 animate-pulse">Đang đồng bộ dữ liệu...</div> : (view === 'dashboard' ? renderDashboard() : renderPlanning())}
+                {loadingData ? <div className="text-center text-white py-10 animate-pulse">
+                    {syncStatus === 'syncing' ? <div className="flex justify-center items-center gap-2"><CloudArrowUpIcon className="animate-bounce"/> Đang đồng bộ...</div> : "Đang tải dữ liệu..."}
+                </div> : (view === 'dashboard' ? renderDashboard() : renderPlanning())}
                 
+                {/* Sync Status Indicator */}
+                {user && (
+                    <div className={`fixed bottom-4 right-4 px-3 py-1.5 rounded-full text-xs font-bold flex items-center gap-2 transition-all duration-500 ${syncStatus === 'saved' ? 'bg-green-500/80 text-white' : syncStatus === 'syncing' ? 'bg-blue-500/80 text-white' : 'opacity-0'}`}>
+                        {syncStatus === 'saved' ? <><CheckCircleIcon className="w-4 h-4"/> Đã lưu</> : <><CloudArrowUpIcon className="w-4 h-4 animate-bounce"/> Đang lưu...</>}
+                    </div>
+                )}
+
                 <FilterModal isOpen={isFilterModalOpen} onClose={() => setFilterModalOpen(false)} onApply={setFilter} currentFilter={filter} />
                 
                 {isIncomeEditOpen && <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"><div className="bg-slate-900 border border-slate-700 rounded-xl p-6 w-full max-w-sm"><h3 className="text-lg font-bold text-white mb-4">Sửa thu nhập</h3><CurrencyInput value={editIncomeValue} onValueChange={setEditIncomeValue} className="input w-full mb-4" /><input type="date" value={editIncomeDate} onChange={(e) => setEditIncomeDate(e.target.value)} className="w-full input px-2 h-10 mb-4 bg-slate-800 border border-slate-600 rounded text-white" /><div className="flex justify-end gap-2"><button onClick={() => setIncomeEditOpen(false)} className="px-3 py-1.5 rounded bg-slate-700 text-slate-300">Hủy</button><button onClick={handleEditIncomeSave} className="px-3 py-1.5 rounded bg-amber-500 text-slate-900 font-bold">Lưu</button></div></div></div>}
