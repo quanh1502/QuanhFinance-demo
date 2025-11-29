@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Debt, FilterState, GasLog, SeasonalTheme, ExpenseLog, IncomeLog, FoodLog, Holiday, SavingsTransaction } from './types';
+import { Debt, FilterState, GasLog, SeasonalTheme, ExpenseLog, DebtTransaction, IncomeLog, FoodLog, Holiday, SavingsTransaction } from './types';
 import { TaurusIcon, StarIcon, SnowflakeIcon, FilterIcon, GasPumpIcon, WifiIcon, FoodIcon, PiggyBankIcon, TargetIcon, ChartLineIcon, WarningIcon, PlusIcon, CheckIcon, CalendarIcon, TagIcon, MoneyBillIcon, BoltIcon, SaveIcon, CircleIcon, CheckCircleIcon, HistoryIcon, HourglassIcon, CloseIcon, ListIcon, TrashIcon, CreditCardIcon, RepeatIcon, EditIcon, ShoppingBagIcon, MinusIcon, CalendarPlusIcon, PlaneIcon, WalletIcon, SunIcon, ArrowRightIcon, ExchangeIcon, CloudArrowUpIcon, CloudArrowDownIcon } from './components/icons';
-import { formatDate, formatDateTime, daysBetween, getWeekNumber, isDateInFilter, MONTH_NAMES, getUpcomingHolidays } from './utils/date';
+import { formatDate, formatDateTime, daysBetween, getWeekNumber, getWeekRange, isDateInFilter, MONTH_NAMES, getUpcomingHolidays } from './utils/date';
 import Header from './components/Header';
 import FilterModal from './components/FilterModal';
 import { sadDogImageBase64 } from './assets/sadDogImage';
@@ -20,20 +20,16 @@ const UI_MODE_KEY = 'spending_app_ui_mode';
 const safeDate = (d: any): Date => {
     if (!d) return new Date();
     if (d instanceof Date) return d;
-    // Xử lý Timestamp của Firestore
     if (typeof d === 'object' && 'seconds' in d) {
         return new Date(d.seconds * 1000); 
     }
-    // Xử lý chuỗi ISO
     return new Date(d);
 };
 
-// --- HELPER: Làm sạch dữ liệu trước khi lưu (Loại bỏ undefined) ---
 const sanitizeForFirestore = (obj: any): any => {
     return JSON.parse(JSON.stringify(obj));
 };
 
-// --- HELPER: Parse dữ liệu từ DB về App ---
 const parseDataDates = (data: any) => {
     if (!data) return {};
     const parsed = { ...data };
@@ -156,7 +152,7 @@ const BudgetRow: React.FC<BudgetRowProps> = ({ icon, label, budget, actual, onBu
 const App: React.FC = () => {
     const [user, setUser] = useState<User | null>(null);
     const [loadingData, setLoadingData] = useState(true);
-    const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'saved'>('idle'); // Trạng thái đồng bộ
+    const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'saved'>('idle');
 
     // --- Data States ---
     const [gasHistory, setGasHistory] = useState<GasLog[]>([]);
@@ -166,7 +162,6 @@ const App: React.FC = () => {
     const [foodLogs, setFoodLogs] = useState<FoodLog[]>([]);
     const [miscLogs, setMiscLogs] = useState<ExpenseLog[]>([]);
     const [savingsHistory, setSavingsHistory] = useState<SavingsTransaction[]>([]);
-    
     const [foodBudget, setFoodBudget] = useState<number>(315000);
     const [miscBudget, setMiscBudget] = useState<number>(100000);
     const [holidays, setHolidays] = useState<Holiday[]>([]);
@@ -204,62 +199,44 @@ const App: React.FC = () => {
     const [recurringEndDate, setRecurringEndDate] = useState('');
     const [newMiscLog, setNewMiscLog] = useState({ name: '', amount: 0, date: new Date().toISOString().slice(0, 10) });
 
-    // --- 3. AUTH & DATA SYNC LOGIC ---
-    
-    // A. Lắng nghe User & Realtime DB
+    // --- AUTH & DATA SYNC ---
     useEffect(() => {
         const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
             setUser(currentUser);
-            
             if (currentUser) {
-                // 1. Đăng nhập thành công -> Kết nối Firestore
                 const docRef = doc(db, "users", currentUser.uid);
+                const docSnap = await getDoc(docRef);
                 
-                // 2. Lắng nghe thay đổi từ Server (Realtime)
-                const unsubSnapshot = onSnapshot(docRef, (docSnap) => {
-                    if (docSnap.exists()) {
-                        const data = docSnap.data();
-                        console.log("🔥 Dữ liệu mới từ Cloud:", data);
-                        
+                if (!docSnap.exists()) {
+                    const localData = loadLocalData();
+                    if (localData) await setDoc(docRef, { ...localData, updatedAt: new Date().toISOString() });
+                }
+                const unsubDoc = onSnapshot(docRef, (doc) => {
+                    if (doc.exists()) {
+                        const data = doc.data();
                         const parsed = parseDataDates(data);
-                        if (parsed) {
-                            // Cập nhật State từ Cloud về
-                            setGasHistory(parsed.gasHistory || []);
-                            setLastWifiPayment(parsed.lastWifiPayment || null);
-                            setDebts(parsed.debts || []);
-                            setIncomeLogs(parsed.incomeLogs || []);
-                            setFoodLogs(parsed.foodLogs || []);
-                            setMiscLogs(parsed.miscLogs || []);
-                            setSavingsHistory(parsed.savingsHistory || []);
-                            setFoodBudget(parsed.foodBudget || 315000);
-                            setMiscBudget(parsed.miscBudget || 100000);
-                            
-                            const upcoming = getUpcomingHolidays();
-                            if (parsed.holidays) {
-                                const merged = upcoming.map(freshH => {
-                                    const savedH = parsed.holidays.find((s: any) => s.id === freshH.id);
-                                    return savedH ? { ...freshH, ...savedH } : freshH;
-                                });
-                                setHolidays(merged);
-                            } else {
-                                setHolidays(upcoming);
-                            }
-                        }
-                    } else {
-                        // MIGRATION: Nếu chưa có data trên mây, đẩy local lên
-                        const localData = loadLocalData();
-                        if (localData && Object.keys(localData).length > 0) {
-                            console.log("🚀 Migrating Local -> Cloud");
-                            setDoc(docRef, { ...sanitizeForFirestore(localData), updatedAt: new Date().toISOString() });
-                        }
+                        setGasHistory(parsed.gasHistory || []);
+                        setLastWifiPayment(parsed.lastWifiPayment || null);
+                        setDebts(parsed.debts || []);
+                        setIncomeLogs(parsed.incomeLogs || []);
+                        setFoodLogs(parsed.foodLogs || []);
+                        setMiscLogs(parsed.miscLogs || []);
+                        setSavingsHistory(parsed.savingsHistory || []);
+                        setFoodBudget(parsed.foodBudget || 315000);
+                        setMiscBudget(parsed.miscBudget || 100000);
+                        const upcoming = getUpcomingHolidays();
+                        if (parsed.holidays) {
+                            const merged = upcoming.map(freshH => {
+                                const savedH = parsed.holidays.find((s: any) => s.id === freshH.id);
+                                return savedH ? { ...freshH, ...savedH } : freshH;
+                            });
+                            setHolidays(merged);
+                        } else { setHolidays(upcoming); }
                     }
-                    setLoadingData(false); // Cho phép App hiển thị
+                    setLoadingData(false);
                 });
-
-                return () => unsubSnapshot();
-
+                return () => unsubDoc();
             } else {
-                // Chế độ khách: Dùng LocalStorage
                 const localData = loadLocalData();
                 if (localData) {
                     setGasHistory(localData.gasHistory || []);
@@ -279,56 +256,31 @@ const App: React.FC = () => {
         return () => unsubscribe();
     }, []);
 
-    // B. Tự động Lưu (Auto-Save)
     const isFirstRun = useRef(true);
-    
     useEffect(() => {
-        // Bỏ qua lần render đầu tiên
-        if (isFirstRun.current) {
-            isFirstRun.current = false;
-            return;
-        }
-        // Bỏ qua nếu đang tải dữ liệu từ Cloud về (tránh ghi đè ngược)
+        if (isFirstRun.current) { isFirstRun.current = false; return; }
         if (loadingData) return;
-
-        const dataToSave = { 
-            gasHistory, lastWifiPayment, debts, incomeLogs, foodLogs, 
-            miscLogs, savingsHistory, foodBudget, miscBudget, holidays 
-        };
-
-        // 1. Luôn lưu LocalStorage (Backup)
+        const dataToSave = { gasHistory, lastWifiPayment, debts, incomeLogs, foodLogs, miscLogs, savingsHistory, foodBudget, miscBudget, holidays };
         localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));
-
-        // 2. Nếu có mạng & user -> Lưu lên Cloud
         if (user) {
             setSyncStatus('syncing');
             const timeoutId = setTimeout(async () => {
                 try {
                     const docRef = doc(db, "users", user.uid);
-                    // Sanitize để xóa undefined
-                    const cleanData = sanitizeForFirestore(dataToSave);
-                    
-                    await setDoc(docRef, { ...cleanData, updatedAt: new Date().toISOString() }, { merge: true });
-                    console.log("✅ Saved to Cloud");
+                    await setDoc(docRef, { ...sanitizeForFirestore(dataToSave), updatedAt: new Date().toISOString() }, { merge: true });
                     setSyncStatus('saved');
                     setTimeout(() => setSyncStatus('idle'), 2000);
-                } catch (e) {
-                    console.error("❌ Save Error:", e);
-                    setSyncStatus('idle');
-                }
-            }, 2000); // Debounce 2s
-
+                } catch (e) { setSyncStatus('idle'); console.error("Lỗi lưu:", e); }
+            }, 2000);
             return () => clearTimeout(timeoutId);
         }
     }, [gasHistory, lastWifiPayment, debts, incomeLogs, foodLogs, miscLogs, savingsHistory, foodBudget, miscBudget, holidays, user, loadingData]);
 
     useEffect(() => { localStorage.setItem(UI_MODE_KEY, uiMode); }, [uiMode]);
 
-    const handleLogin = async () => { try { await signInWithPopup(auth, googleProvider); } catch (error: any) { alert("Lỗi: " + error.message); } };
-    const handleLogout = async () => { if(confirm("Đăng xuất?")) { await signOut(auth); window.location.reload(); } };
+    const handleLogin = async () => { try { await signInWithPopup(auth, googleProvider); } catch (error: any) { alert("Lỗi đăng nhập: " + error.message); } };
+    const handleLogout = async () => { if(confirm("Bạn muốn đăng xuất?")) { await signOut(auth); window.location.reload(); } };
 
-    // --- Computed Values & Logic ---
-    // (Giữ nguyên logic tính toán)
     const seasonalTheme = useMemo<SeasonalTheme>(() => {
         const month = currentDate.getMonth();
         const greetingName = user ? user.displayName?.split(' ').pop() : 'bạn';
@@ -375,7 +327,48 @@ const App: React.FC = () => {
     const handleSaveManualEntry = () => { const d = new Date(manualDate); if (manualEntryModal.type === 'gas') setGasHistory(p => [...p, {id: Date.now().toString(), date: d}].sort((a,b)=>a.date.getTime()-b.date.getTime())); else setLastWifiPayment(d); setManualEntryModal({isOpen:false, type:null}); };
     const handleEditIncomeStart = (id: string, val: number, date: Date) => { setEditingIncomeId(id); setEditIncomeValue(val); setEditIncomeDate(new Date(date).toISOString().slice(0, 10)); setIncomeEditOpen(true); };
     const handleEditIncomeSave = () => { if(editingIncomeId) setIncomeLogs(p => p.map(l => l.id === editingIncomeId ? {...l, amount: editIncomeValue, date: new Date(editIncomeDate)} : l)); setIncomeEditOpen(false); setEditingIncomeId(null); };
-    const handleSaveDebt = (e: React.FormEvent) => { e.preventDefault(); if (editingDebtId) { setDebts(p => p.map(d => d.id === editingDebtId ? { ...d, name: newDebt.name, source: newDebt.source, totalAmount: newDebt.totalAmount, dueDate: new Date(newDebt.dueDate), targetMonth: newDebt.targetMonth, targetYear: newDebt.targetYear } : d)); } else { const list: Debt[] = []; if (debtType === 'shopee') { let m = shopeeBillMonth + 1, y = shopeeBillYear; if (m > 11) { m = 0; y++; } list.push({ id: Date.now().toString(), name: `SPayLater T${shopeeBillMonth + 1}`, source: 'Shopee', totalAmount: newDebt.totalAmount, amountPaid: 0, dueDate: new Date(y, m, 10), createdAt: new Date(), targetMonth: shopeeBillMonth, targetYear: shopeeBillYear, transactions: [] }); } else if (isRecurringDebt) { let cur = new Date(newDebt.dueDate), end = new Date(recurringEndDate), count = 1; while (cur <= end) { list.push({ id: `${Date.now()}-${count}`, name: `${newDebt.name} ${recurringFrequency==='monthly' ? `(T${cur.getMonth()+1})` : `(Kỳ ${count})`}`, source: newDebt.source, totalAmount: newDebt.totalAmount, amountPaid: 0, dueDate: new Date(cur), createdAt: new Date(), targetMonth: cur.getMonth(), targetYear: cur.getFullYear(), transactions: [] }); recurringFrequency === 'weekly' ? cur.setDate(cur.getDate()+7) : cur.setMonth(cur.getMonth()+1); count++; } } else { list.push({ id: Date.now().toString(), name: newDebt.name, source: newDebt.source, totalAmount: newDebt.totalAmount, amountPaid: 0, dueDate: new Date(newDebt.dueDate), createdAt: new Date(), targetMonth: newDebt.targetMonth, targetYear: newDebt.targetYear, transactions: [] }); } setDebts(p => [...p, ...list]); } setNewDebt({ name: '', source: '', totalAmount: 0, dueDate: new Date().toISOString().slice(0, 10), targetMonth: currentDate.getMonth(), targetYear: currentDate.getFullYear() }); setDebtModalOpen(false); setIsRecurringDebt(false); setEditingDebtId(null); setDebtType('standard'); };
+    
+    // [UPDATED] Handle Save Debt with Shopee Year
+    const handleSaveDebt = (e: React.FormEvent) => {
+        e.preventDefault();
+        if (editingDebtId) {
+            setDebts(p => p.map(d => d.id === editingDebtId ? { ...d, name: newDebt.name, source: newDebt.source, totalAmount: newDebt.totalAmount, dueDate: new Date(newDebt.dueDate), targetMonth: newDebt.targetMonth, targetYear: newDebt.targetYear } : d));
+        } else {
+            const list: Debt[] = [];
+            if (debtType === 'shopee') {
+                let m = shopeeBillMonth + 1;
+                let y = shopeeBillYear;
+                if (m > 11) { m = 0; y++; }
+                // Tạo ngày hạn trả: mùng 10 tháng sau
+                const dueDate = new Date(y, m, 10);
+                
+                list.push({
+                    id: Date.now().toString(),
+                    // [UPDATED] Tên khoản nợ hiển thị Năm
+                    name: `SPayLater T${shopeeBillMonth + 1}/${shopeeBillYear}`,
+                    source: 'Shopee',
+                    totalAmount: newDebt.totalAmount,
+                    amountPaid: 0,
+                    dueDate: dueDate,
+                    createdAt: new Date(),
+                    targetMonth: shopeeBillMonth,
+                    targetYear: shopeeBillYear,
+                    transactions: []
+                });
+            } else if (isRecurringDebt) {
+                let cur = new Date(newDebt.dueDate), end = new Date(recurringEndDate), count = 1;
+                while (cur <= end) {
+                    list.push({ id: `${Date.now()}-${count}`, name: `${newDebt.name} ${recurringFrequency==='monthly' ? `(T${cur.getMonth()+1})` : `(Kỳ ${count})`}`, source: newDebt.source, totalAmount: newDebt.totalAmount, amountPaid: 0, dueDate: new Date(cur), createdAt: new Date(), targetMonth: cur.getMonth(), targetYear: cur.getFullYear(), transactions: [] });
+                    recurringFrequency === 'weekly' ? cur.setDate(cur.getDate()+7) : cur.setMonth(cur.getMonth()+1); count++;
+                }
+            } else {
+                list.push({ id: Date.now().toString(), name: newDebt.name, source: newDebt.source, totalAmount: newDebt.totalAmount, amountPaid: 0, dueDate: new Date(newDebt.dueDate), createdAt: new Date(), targetMonth: newDebt.targetMonth, targetYear: newDebt.targetYear, transactions: [] });
+            }
+            setDebts(p => [...p, ...list]);
+        }
+        setNewDebt({ name: '', source: '', totalAmount: 0, dueDate: new Date().toISOString().slice(0, 10), targetMonth: currentDate.getMonth(), targetYear: currentDate.getFullYear() });
+        setDebtModalOpen(false); setIsRecurringDebt(false); setEditingDebtId(null); setDebtType('standard');
+    };
     const handleEditDebt = (d: Debt) => { setNewDebt({ name: d.name.replace(/\(.*\)/,'').trim(), source: d.source, totalAmount: d.totalAmount, dueDate: d.dueDate.toISOString().slice(0, 10), targetMonth: d.targetMonth!, targetYear: d.targetYear! }); setEditingDebtId(d.id); setDebtType('standard'); setDebtModalOpen(true); };
     const handleDeleteDebt = (id: string) => { if(confirm("Xóa?")) setDebts(p => p.filter(d => d.id !== id)); setDebtModalOpen(false); };
     const getFilterDisplay = () => filter.type === 'week' ? `Tuần ${filter.week}` : filter.type === 'month' ? `${MONTH_NAMES[filter.month!]} ${filter.year}` : filter.type === 'year' ? `Năm ${filter.year}` : 'Tất cả';
@@ -511,7 +504,7 @@ const App: React.FC = () => {
                 
                 {manualEntryModal.isOpen && <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"><div className="bg-slate-900 border border-slate-700 rounded-xl p-6 w-full max-w-sm"><h3 className="text-lg font-bold text-white mb-4">Cập nhật lịch sử</h3><input type="date" value={manualDate} onChange={(e) => setManualDate(e.target.value)} className="input w-full mb-4" /><div className="flex justify-end gap-2"><button onClick={() => setManualEntryModal({isOpen: false, type: null})} className="px-3 py-1.5 rounded bg-slate-700 text-slate-300">Hủy</button><button onClick={handleSaveManualEntry} className="px-3 py-1.5 rounded bg-amber-500 text-slate-900 font-bold">Lưu</button></div></div></div>}
                 
-                {isDebtModalOpen && <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"><div className="bg-slate-900 border border-slate-700 rounded-xl p-6 w-full max-w-md max-h-[90vh] overflow-y-auto"><form onSubmit={handleSaveDebt}><h3 className="text-2xl font-bold mb-4">{editingDebtId ? "Sửa nợ" : "Thêm nợ"}</h3>{!editingDebtId && <div className="flex border-b border-slate-700 mb-4"><button type="button" onClick={() => setDebtType('standard')} className={`flex-1 py-2 ${debtType==='standard'?'text-amber-400 border-b-2 border-amber-400':'text-slate-400'}`}>Thường</button><button type="button" onClick={() => setDebtType('shopee')} className={`flex-1 py-2 ${debtType==='shopee'?'text-orange-500 border-b-2 border-orange-500':'text-slate-400'}`}>Shopee</button></div>}{debtType === 'standard' ? <div className="space-y-4"><div><label className="text-sm text-slate-300">Tên</label><input type="text" value={newDebt.name} onChange={e=>setNewDebt({...newDebt,name:e.target.value})} className="input w-full" required/></div><div><label className="text-sm text-slate-300">Nguồn</label><input type="text" value={newDebt.source} onChange={e=>setNewDebt({...newDebt,source:e.target.value})} className="input w-full" required/></div>{!editingDebtId && <div className="flex items-center gap-2"><input type="checkbox" checked={isRecurringDebt} onChange={e=>setIsRecurringDebt(e.target.checked)}/><label>Trả góp/Lặp lại</label></div>}<div><label className="text-sm text-slate-300">Ngày hạn/Bắt đầu</label><input type="date" value={newDebt.dueDate} onChange={e=>setNewDebt({...newDebt,dueDate:e.target.value})} className="input w-full" required/></div>{isRecurringDebt && <div className="p-3 bg-amber-900/20 rounded border border-amber-500/30 space-y-2"><select value={recurringFrequency} onChange={e=>setRecurringFrequency(e.target.value as any)} className="input w-full"><option value="monthly">Tháng</option><option value="weekly">Tuần</option></select><input type="date" value={recurringEndDate} onChange={e=>setRecurringEndDate(e.target.value)} className="input w-full" required/></div>}<div><label className="text-sm text-slate-300">Số tiền</label><CurrencyInput value={newDebt.totalAmount} onValueChange={v=>setNewDebt({...newDebt,totalAmount:v})} className="input w-full" required/></div>{!isRecurringDebt && <div className="flex gap-2 mt-2"><select value={newDebt.targetMonth} onChange={e=>setNewDebt({...newDebt,targetMonth:parseInt(e.target.value)})} className="input flex-1">{MONTH_NAMES.map((m,i)=><option key={i} value={i} className="text-black">{m}</option>)}</select><input type="number" value={newDebt.targetYear} onChange={e=>setNewDebt({...newDebt,targetYear:parseInt(e.target.value)})} className="input w-24"/></div>}</div> : <div className="space-y-4"><div className="flex justify-between"><label>Hóa đơn tháng</label><div className="flex gap-1">{MONTH_NAMES.map((m,i)=><button type="button" key={i} onClick={()=>setShopeeBillMonth(i)} className={`p-1 text-xs rounded ${shopeeBillMonth===i?'bg-orange-500':'bg-slate-700'}`}>{i+1}</button>)}</div></div><div><label>Số tiền</label><CurrencyInput value={newDebt.totalAmount} onValueChange={v=>setNewDebt({...newDebt,totalAmount:v})} className="input w-full"/></div></div>}<div className="mt-6 flex justify-end gap-3">{editingDebtId && <button type="button" onClick={()=>handleDeleteDebt(editingDebtId)} className="text-red-400 mr-auto"><TrashIcon/> Xóa</button>}<button type="button" onClick={()=>setDebtModalOpen(false)} className="text-slate-300">Hủy</button><button type="submit" className="bg-amber-500 text-slate-900 px-4 py-2 rounded font-bold">Lưu</button></div></form></div></div>}
+                {isDebtModalOpen && <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"><div className="bg-slate-900 border border-slate-700 rounded-xl p-6 w-full max-w-md max-h-[90vh] overflow-y-auto"><form onSubmit={handleSaveDebt}><h3 className="text-2xl font-bold mb-4">{editingDebtId ? "Sửa nợ" : "Thêm nợ"}</h3>{!editingDebtId && <div className="flex border-b border-slate-700 mb-4"><button type="button" onClick={() => setDebtType('standard')} className={`flex-1 py-2 ${debtType==='standard'?'text-amber-400 border-b-2 border-amber-400':'text-slate-400'}`}>Thường</button><button type="button" onClick={() => setDebtType('shopee')} className={`flex-1 py-2 ${debtType==='shopee'?'text-orange-500 border-b-2 border-orange-500':'text-slate-400'}`}>Shopee</button></div>}{debtType === 'standard' ? <div className="space-y-4"><div><label className="text-sm text-slate-300">Tên</label><input type="text" value={newDebt.name} onChange={e=>setNewDebt({...newDebt,name:e.target.value})} className="input w-full" required/></div><div><label className="text-sm text-slate-300">Nguồn</label><input type="text" value={newDebt.source} onChange={e=>setNewDebt({...newDebt,source:e.target.value})} className="input w-full" required/></div>{!editingDebtId && <div className="flex items-center gap-2"><input type="checkbox" checked={isRecurringDebt} onChange={e=>setIsRecurringDebt(e.target.checked)}/><label>Trả góp/Lặp lại</label></div>}<div><label className="text-sm text-slate-300">Ngày hạn/Bắt đầu</label><input type="date" value={newDebt.dueDate} onChange={e=>setNewDebt({...newDebt,dueDate:e.target.value})} className="input w-full" required/></div>{isRecurringDebt && <div className="p-3 bg-amber-900/20 rounded border border-amber-500/30 space-y-2"><select value={recurringFrequency} onChange={e=>setRecurringFrequency(e.target.value as any)} className="input w-full"><option value="monthly">Tháng</option><option value="weekly">Tuần</option></select><input type="date" value={recurringEndDate} onChange={e=>setRecurringEndDate(e.target.value)} className="input w-full" required/></div>}<div><label className="text-sm text-slate-300">Số tiền</label><CurrencyInput value={newDebt.totalAmount} onValueChange={v=>setNewDebt({...newDebt,totalAmount:v})} className="input w-full" required/></div>{!isRecurringDebt && <div className="flex gap-2 mt-2"><select value={newDebt.targetMonth} onChange={e=>setNewDebt({...newDebt,targetMonth:parseInt(e.target.value)})} className="input flex-1">{MONTH_NAMES.map((m,i)=><option key={i} value={i} className="text-black">{m}</option>)}</select><input type="number" value={newDebt.targetYear} onChange={e=>setNewDebt({...newDebt,targetYear:parseInt(e.target.value)})} className="input w-24"/></div>}</div> : <div className="space-y-4"><div className="flex justify-between items-center mb-2"><label className="text-sm text-slate-300">Năm hóa đơn</label><input type="number" value={shopeeBillYear} onChange={(e) => setShopeeBillYear(parseInt(e.target.value))} className="input w-24 text-center bg-slate-800 text-white border border-slate-600 rounded" /></div><div><label className="text-sm text-slate-300 block mb-2">Tháng</label><div className="grid grid-cols-6 gap-1">{MONTH_NAMES.map((m, i) => (<button type="button" key={i} onClick={() => setShopeeBillMonth(i)} className={`p-1 text-xs rounded ${shopeeBillMonth === i ? 'bg-orange-500 text-white' : 'bg-slate-700 text-slate-400'}`}>T{i + 1}</button>))}</div></div><div><label className="text-sm text-slate-300">Số tiền</label><CurrencyInput value={newDebt.totalAmount} onValueChange={v=>setNewDebt({...newDebt,totalAmount:v})} className="input w-full"/></div></div>}<div className="mt-6 flex justify-end gap-3">{editingDebtId && <button type="button" onClick={()=>handleDeleteDebt(editingDebtId)} className="text-red-400 mr-auto"><TrashIcon/> Xóa</button>}<button type="button" onClick={()=>setDebtModalOpen(false)} className="text-slate-300">Hủy</button><button type="submit" className="bg-amber-500 text-slate-900 px-4 py-2 rounded font-bold">Lưu</button></div></form></div></div>}
                 
                 {isSavingsHistoryOpen && (
                     <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
