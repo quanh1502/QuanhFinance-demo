@@ -362,32 +362,55 @@ interface StrategicViewProps {
     onClose: () => void;
     // [NEW] Prop to save plan
     onSavePlan: (config: any) => void;
-    onDeletePlan: () => void; // [NEW]
+    onDeletePlan: () => void; 
     initialConfig: any;
 }
 
 const StrategicView: React.FC<StrategicViewProps> = ({ theme, debts, savingsBalance, onClose, onSavePlan, onDeletePlan, initialConfig }) => {
-    // Config States - load from initial or default
+    // [MODIFIED] Generic Config State
     const [config, setConfig] = useState(initialConfig || {
-        startDate: '2025-12-12',
-        tetDate: '2026-02-17',
-        internshipDate: '2026-03-01',
+        planName: 'Kế hoạch Mới',
+        startDate: new Date().toISOString().slice(0, 10),
+        endDate: new Date(new Date().getTime() + 90 * 86400000).toISOString().slice(0, 10), // Default 3 months
         weeklyIncome: 0,
         weeklyFood: 315000,
         weeklyMisc: 100000,
-        tetGoal: 3000000, // Goal for Tet shopping
-        bufferGoal: 5000000 // Goal for Internship buffer
+        goals: [
+            { id: 'g1', name: 'Mục tiêu 1', amount: 0 }
+        ]
     });
 
     const [plan, setPlan] = useState<any[]>([]);
     const [selectedWeekDebt, setSelectedWeekDebt] = useState<{ weekStr: string, details: string[] } | null>(null);
+    
+    // Helpers for Goal Management
+    const addGoal = () => {
+        setConfig(prev => ({
+            ...prev,
+            goals: [...prev.goals, { id: Date.now().toString(), name: '', amount: 0 }]
+        }));
+    };
+
+    const removeGoal = (id: string) => {
+        setConfig(prev => ({
+            ...prev,
+            goals: prev.goals.filter((g: any) => g.id !== id)
+        }));
+    };
+    
+    const updateGoal = (id: string, field: string, value: any) => {
+        setConfig(prev => ({
+            ...prev,
+            goals: prev.goals.map((g: any) => g.id === id ? { ...g, [field]: value } : g)
+        }));
+    };
 
     // Logic to generate the plan
     useEffect(() => {
         if (!config.weeklyIncome) return;
 
         const start = new Date(config.startDate);
-        const end = new Date(config.internshipDate); // Plan until internship starts
+        const end = new Date(config.endDate);
         const weeks = [];
         let current = new Date(start);
         let cumulativeSavings = savingsBalance;
@@ -411,17 +434,15 @@ const StrategicView: React.FC<StrategicViewProps> = ({ theme, debts, savingsBala
                 const remaining = d.totalAmount - d.amountPaid;
                 if (remaining <= 0) return;
 
-                // Skip counting debt if it is BNPL (assuming handled by existing balance or other means) - Wait, in cashflow, payment is payment.
-                // If BNPL is used for daily expense, we counted expense. Paying it off is cash out.
-                // HOWEVER, user says "hệ thống đang set nhầm nợ tháng".
-                // Let's ensure we only count payment if due.
+                // Skip BNPL in cashflow if user uses them for daily expense (already counted)
+                // Logic refinement: If BNPL is used for daily expenses, paying it off is an outflow.
+                // Just keep standard logic.
 
                 if (d.repaymentType === 'fixed') {
                     // Check if "due day" falls in this week
-                    const dueDay = d.dueDate.getDate(); // e.g., 5th
+                    const dueDay = d.dueDate.getDate(); 
                     
                     let hasDueDay = false;
-                    // Iterate through days of week
                     for (let t = new Date(weekStart); t <= weekEnd; t.setDate(t.getDate() + 1)) {
                         if (t.getDate() === dueDay) hasDueDay = true;
                     }
@@ -433,29 +454,20 @@ const StrategicView: React.FC<StrategicViewProps> = ({ theme, debts, savingsBala
                     }
                 } else {
                     // Flexible: Suggested weekly payment
-                    // Logic: remaining / weeksLeft
                     const daysToDue = daysBetween(weekStart, d.dueDate);
-                    
-                    // [ADJUSTED LOGIC] Only suggest payment if due date is VERY CLOSE (e.g., within 4 weeks)
-                    // to avoid "double counting" feeling for far-future debts.
-                    // User complained about seeing March debts in Dec.
                     const weeksToDue = Math.ceil(daysToDue / 7);
-                    const START_SAVING_WEEKS_BEFORE = 4; // Only start saving 4 weeks before due date
+                    const START_SAVING_WEEKS_BEFORE = 4; 
 
                     if (daysToDue > 0 && weeksToDue <= START_SAVING_WEEKS_BEFORE) {
                         const weeksLeft = Math.max(1, weeksToDue);
-                        // Don't be too aggressive if weeksLeft is large.
-                        // If weeksLeft is 1, pay all. 
                         const weekly = Math.ceil(remaining / weeksLeft);
                         
                         debtPayment += weekly;
                         debtDetails.push(`${d.name}: -${weekly.toLocaleString()}đ (Sắp đến hạn: còn ${weeksLeft} tuần)`);
                     } else if (daysToDue > -7 && daysToDue <= 0) {
-                         // Due/Overdue this week
                          debtPayment += remaining;
                          debtDetails.push(`${d.name}: -${remaining.toLocaleString()}đ (Tất toán ngay!)`);
                     }
-                    // If > 4 weeks away, contribute 0 for now (Just-in-time strategy)
                 }
             });
 
@@ -470,8 +482,7 @@ const StrategicView: React.FC<StrategicViewProps> = ({ theme, debts, savingsBala
                 debtPayment,
                 debtDetails,
                 net,
-                balance: cumulativeSavings,
-                isTet: weekStart <= new Date(config.tetDate) && weekEnd >= new Date(config.tetDate)
+                balance: cumulativeSavings
             });
 
             // Next week
@@ -480,28 +491,32 @@ const StrategicView: React.FC<StrategicViewProps> = ({ theme, debts, savingsBala
         setPlan(weeks);
     }, [config, debts, savingsBalance]);
 
-    const totalGoal = config.tetGoal + config.bufferGoal;
+    const totalGoal = config.goals.reduce((sum: number, g: any) => sum + g.amount, 0);
     const finalBalance = plan.length > 0 ? plan[plan.length - 1].balance : savingsBalance;
-    // Progress bar logic: 0% at 0 balance, 100% at totalGoal.
-    // If balance is negative, progress is 0.
-    const progress = Math.max(0, Math.min((finalBalance / totalGoal) * 100, 100));
+    const progress = totalGoal > 0 ? Math.max(0, Math.min((finalBalance / totalGoal) * 100, 100)) : 0;
 
     return (
         <div className="space-y-6 animate-fade-in-up">
             <div className={`${theme.cardBg} p-6 rounded-xl shadow-lg border-l-4 border-indigo-500`}>
                 <div className="flex justify-between items-start mb-6">
-                    <div>
-                        <h3 className={`text-2xl font-bold ${theme.primaryTextColor} flex items-center gap-2`}>
-                            <GoalIcon className="text-indigo-400" /> Chiến lược Tết & Thực Tập
-                        </h3>
-                        <p className={`text-sm ${theme.secondaryTextColor}`}>Lộ trình tài chính từ 12/12 đến tháng 3</p>
+                    <div className="flex-1 mr-4">
+                        <div className="flex items-center gap-2 mb-1">
+                            <GoalIcon className="text-indigo-400 text-2xl" />
+                            <input 
+                                type="text" 
+                                value={config.planName} 
+                                onChange={(e) => setConfig({...config, planName: e.target.value})}
+                                className="bg-transparent border-b border-slate-600 text-xl font-bold text-white focus:outline-none focus:border-indigo-500 w-full"
+                                placeholder="Đặt tên kế hoạch..."
+                            />
+                        </div>
+                        <p className={`text-sm ${theme.secondaryTextColor}`}>Lộ trình tài chính từ {formatDate(new Date(config.startDate))} đến {formatDate(new Date(config.endDate))}</p>
                     </div>
                     <div className="flex gap-2">
-                        {/* [NEW] Delete Button */}
                          {initialConfig && (
                              <button onClick={onDeletePlan} className="bg-red-900/80 text-red-200 px-3 py-1.5 rounded hover:bg-red-800 text-sm font-bold flex items-center gap-1 border border-red-700/50"><TrashIcon className="w-3 h-3"/> Hủy</button>
                          )}
-                         <button onClick={() => onSavePlan(config)} className="bg-emerald-600 text-white px-3 py-1.5 rounded hover:bg-emerald-500 text-sm font-bold flex items-center gap-1"><SaveIcon className="w-3 h-3"/> Lưu Kế hoạch</button>
+                         <button onClick={() => onSavePlan(config)} className="bg-emerald-600 text-white px-3 py-1.5 rounded hover:bg-emerald-500 text-sm font-bold flex items-center gap-1"><SaveIcon className="w-3 h-3"/> Lưu</button>
                         <button onClick={onClose} className="bg-slate-800 text-slate-300 px-3 py-1.5 rounded hover:bg-slate-700 text-sm">Đóng</button>
                     </div>
                 </div>
@@ -509,8 +524,18 @@ const StrategicView: React.FC<StrategicViewProps> = ({ theme, debts, savingsBala
                 {/* Configuration Panel */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
                     <div className="bg-slate-900/50 p-4 rounded-lg border border-slate-700">
-                        <h4 className="text-indigo-400 font-bold mb-3 uppercase text-xs">1. Thiết lập Nguồn lực (Tuần)</h4>
+                        <h4 className="text-indigo-400 font-bold mb-3 uppercase text-xs">1. Thiết lập Nguồn lực & Thời gian</h4>
                         <div className="space-y-3">
+                             <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label className="text-xs text-slate-400 block mb-1">Ngày bắt đầu</label>
+                                    <input type="date" value={config.startDate} onChange={(e) => setConfig({...config, startDate: e.target.value})} className="input w-full text-sm" />
+                                </div>
+                                <div>
+                                    <label className="text-xs text-slate-400 block mb-1">Ngày kết thúc</label>
+                                    <input type="date" value={config.endDate} onChange={(e) => setConfig({...config, endDate: e.target.value})} className="input w-full text-sm" />
+                                </div>
+                            </div>
                             <div>
                                 <label className="text-xs text-slate-400 block mb-1">Thu nhập dự kiến (Lương/Tuần)</label>
                                 <CurrencyInput value={config.weeklyIncome} onValueChange={v => setConfig({...config, weeklyIncome: v})} className="input w-full" placeholder="Nhập lương tuần..." />
@@ -528,29 +553,35 @@ const StrategicView: React.FC<StrategicViewProps> = ({ theme, debts, savingsBala
                         </div>
                     </div>
 
-                    <div className="bg-slate-900/50 p-4 rounded-lg border border-slate-700">
-                        <h4 className="text-emerald-400 font-bold mb-3 uppercase text-xs">2. Thiết lập Mục tiêu & Thời gian</h4>
-                        <div className="space-y-3">
-                            <div className="grid grid-cols-2 gap-3">
-                                <div>
-                                    <label className="text-xs text-slate-400 block mb-1">Ngày bắt đầu</label>
-                                    <input type="date" value={config.startDate} onChange={(e) => setConfig({...config, startDate: e.target.value})} className="input w-full text-sm" />
+                    <div className="bg-slate-900/50 p-4 rounded-lg border border-slate-700 flex flex-col">
+                        <div className="flex justify-between items-center mb-3">
+                            <h4 className="text-emerald-400 font-bold uppercase text-xs">2. Danh sách Mục tiêu</h4>
+                            <button onClick={addGoal} className="text-xs bg-emerald-900 text-emerald-200 px-2 py-1 rounded hover:bg-emerald-800">+ Thêm</button>
+                        </div>
+                        <div className="space-y-2 flex-1 overflow-y-auto max-h-48 custom-scrollbar pr-1">
+                            {config.goals.map((g: any, idx: number) => (
+                                <div key={g.id} className="flex gap-2 items-center">
+                                    <input 
+                                        type="text" 
+                                        placeholder="Tên mục tiêu" 
+                                        value={g.name} 
+                                        onChange={(e) => updateGoal(g.id, 'name', e.target.value)}
+                                        className="input flex-1 text-sm bg-slate-800 border-slate-600"
+                                    />
+                                    <CurrencyInput 
+                                        value={g.amount} 
+                                        onValueChange={(v) => updateGoal(g.id, 'amount', v)} 
+                                        className="input w-32 text-sm bg-slate-800 border-slate-600 text-right"
+                                        placeholder="Số tiền"
+                                    />
+                                    <button onClick={() => removeGoal(g.id)} className="text-slate-500 hover:text-red-400 px-1"><TrashIcon className="w-3 h-3"/></button>
                                 </div>
-                                <div>
-                                    <label className="text-xs text-slate-400 block mb-1">Ngày kết thúc (Thực tập)</label>
-                                    <input type="date" value={config.internshipDate} onChange={(e) => setConfig({...config, internshipDate: e.target.value})} className="input w-full text-sm" />
-                                </div>
-                            </div>
-                            <div className="grid grid-cols-2 gap-3">
-                                <div>
-                                    <label className="text-xs text-slate-400 block mb-1">Mục tiêu sắm Tết</label>
-                                    <CurrencyInput value={config.tetGoal} onValueChange={v => setConfig({...config, tetGoal: v})} className="input w-full" />
-                                </div>
-                                <div>
-                                    <label className="text-xs text-slate-400 block mb-1">Dự phòng Thực tập</label>
-                                    <CurrencyInput value={config.bufferGoal} onValueChange={v => setConfig({...config, bufferGoal: v})} className="input w-full" />
-                                </div>
-                            </div>
+                            ))}
+                            {config.goals.length === 0 && <p className="text-slate-500 text-xs italic text-center mt-4">Chưa có mục tiêu nào.</p>}
+                        </div>
+                        <div className="mt-3 pt-3 border-t border-slate-700 flex justify-between items-center">
+                            <span className="text-xs font-bold text-slate-400">TỔNG MỤC TIÊU:</span>
+                            <span className="text-sm font-bold text-white">{totalGoal.toLocaleString()}đ</span>
                         </div>
                     </div>
                 </div>
@@ -560,32 +591,33 @@ const StrategicView: React.FC<StrategicViewProps> = ({ theme, debts, savingsBala
                     <div className="animate-fade-in-up">
                         <div className="bg-slate-800 p-4 rounded-t-xl border-b border-slate-700 flex justify-between items-center">
                             <div>
-                                <p className="text-slate-400 text-xs mb-1">Tiến độ tích lũy mục tiêu ({totalGoal.toLocaleString()}đ)</p>
+                                <p className="text-slate-400 text-xs mb-1">Dự kiến tích lũy đến {formatDate(new Date(config.endDate))}</p>
                                 <div className="flex items-end gap-2">
                                     <p className={`text-2xl font-bold ${finalBalance >= 0 ? 'text-white' : 'text-red-400'}`}>{finalBalance.toLocaleString('vi-VN')}đ</p>
-                                    <span className="text-xs text-slate-500 mb-1.5">/ {totalGoal.toLocaleString()}đ</span>
+                                    {totalGoal > 0 && <span className="text-xs text-slate-500 mb-1.5">/ {totalGoal.toLocaleString()}đ</span>}
                                 </div>
                             </div>
-                            <div className="text-right w-1/2">
-                                <p className="text-slate-400 text-xs mb-1 text-right">Đã đạt {Math.round(progress)}%</p>
-                                <div className="w-full bg-slate-700 h-3 rounded-full relative overflow-hidden">
-                                    <div 
-                                        className={`h-3 rounded-full transition-all duration-1000 ${progress >= 100 ? 'bg-gradient-to-r from-emerald-500 to-green-400' : 'bg-gradient-to-r from-amber-500 to-yellow-400'}`} 
-                                        style={{width: `${progress}%`}}
-                                    ></div>
+                            {totalGoal > 0 && (
+                                <div className="text-right w-1/2">
+                                    <p className="text-slate-400 text-xs mb-1 text-right">Tiến độ: {Math.round(progress)}%</p>
+                                    <div className="w-full bg-slate-700 h-3 rounded-full relative overflow-hidden">
+                                        <div 
+                                            className={`h-3 rounded-full transition-all duration-1000 ${progress >= 100 ? 'bg-gradient-to-r from-emerald-500 to-green-400' : 'bg-gradient-to-r from-amber-500 to-yellow-400'}`} 
+                                            style={{width: `${progress}%`}}
+                                        ></div>
+                                    </div>
                                 </div>
-                            </div>
+                            )}
                         </div>
 
                         {/* Timeline */}
                         <div className="bg-black/20 rounded-b-xl overflow-hidden relative">
                             <div className="max-h-80 overflow-y-auto custom-scrollbar p-2 space-y-2">
                                 {plan.map((week, idx) => (
-                                    <div key={idx} className={`p-3 rounded border ${week.isTet ? 'bg-red-900/20 border-red-500/50' : 'bg-slate-800/40 border-slate-700/50'} flex justify-between items-center relative group`}>
+                                    <div key={idx} className={`p-3 rounded border bg-slate-800/40 border-slate-700/50 flex justify-between items-center relative group`}>
                                         <div className="flex-1">
                                             <div className="flex items-center gap-2 mb-1">
                                                 <span className="text-xs font-bold text-slate-300">Tuần {formatDate(week.start).slice(0,5)} - {formatDate(week.end).slice(0,5)}</span>
-                                                {week.isTet && <span className="text-[10px] bg-red-600 text-white px-1.5 rounded font-bold">Tết Nguyên Đán</span>}
                                             </div>
                                             <div className="text-xs text-slate-500 flex gap-3 items-center">
                                                 <span className="text-emerald-400">+{week.income.toLocaleString()}</span>
@@ -1153,7 +1185,7 @@ const App: React.FC = () => {
                             <div className="w-36"><input type="date" value={incomeDate} onChange={(e) => setIncomeDate(e.target.value)} className="w-full input px-2 text-sm h-[42px] bg-slate-900 border border-slate-600 rounded-md text-white focus:outline-none focus:border-emerald-500" title="Chọn ngày nhận tiền" /></div>
                             <button onClick={handleUpdateIncome} className={`px-4 py-2.5 rounded-md font-semibold ${seasonalTheme.accentColor} text-slate-900 flex items-center gap-2`}><SaveIcon /> Lưu</button>
                          </div>
-                         <div className="mt-4 max-h-40 overflow-y-auto pr-1 space-y-2">{incomeLogs.filter(l => isDateInFilter(new Date(l.date), filter)).slice().reverse().map(log => (<div key={log.id} className="flex justify-between items-center p-2 bg-slate-800/50 rounded border border-slate-700 text-sm"><span className="text-slate-400">{formatDateTime(new Date(log.date))}</span><div className="flex items-center gap-2"><span className="text-emerald-400 italic">{log.amount.toLocaleString('vi-VN')}đ</span>{!log.isSavingsWithdrawal && <button onClick={() => handleEditIncomeStart(log.id, log.amount, log.date)} className="text-slate-500 hover:text-amber-400"><EditIcon className="w-3 h-3" /></button>}</div></div>))}</div>
+                         <div className="mt-4 max-h-40 overflow-y-auto pr-1 space-y-2">{incomeLogs.filter(l => isDateInFilter(new Date(l.date), filter)).slice().reverse().map(log => (<div key={log.id} className="flex justify-between items-center p-2 bg-slate-800/50 rounded border border-slate-700 text-sm"><span className="text-slate-400">{formatDateTime(new Date(log.date))}</span><div className="flex items-center gap-2"><span className={log.isSavingsWithdrawal ? 'text-emerald-400 italic' : 'text-white font-bold'}>{log.amount.toLocaleString('vi-VN')}đ</span>{!log.isSavingsWithdrawal && <button onClick={() => handleEditIncomeStart(log.id, log.amount, log.date)} className="text-slate-500 hover:text-amber-400"><EditIcon className="w-3 h-3" /></button>}</div></div>))}</div>
                     </div>
                 </div>
 
