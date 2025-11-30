@@ -963,8 +963,28 @@ const App: React.FC = () => {
         setIncomeLogs(p => [...p, { id: Date.now().toString(), amount: incomeInput, date: date }]); 
         setIncomeInput(0); 
     };
-    const handleSavingsDeposit = () => { if (financialStatus <= 0) return; const newTransaction: SavingsTransaction = { id: Date.now().toString(), date: new Date(), amount: financialStatus, type: 'deposit', note: 'Cất tiền dư' }; setSavingsHistory(prev => [...prev, newTransaction]); };
-    const handleSavingsWithdraw = (amount: number) => { if (amount > 0 && amount <= currentSavingsBalance) { setSavingsHistory(prev => [...prev, { id: Date.now().toString(), date: new Date(), amount, type: 'withdrawal', note: 'Rút tiêu dùng' }]); setIncomeLogs(p => [...p, { id: Date.now().toString(), amount, date: new Date(), isSavingsWithdrawal: true }]); } };
+    const handleSavingsDeposit = () => { 
+        if (financialStatus <= 0) return; 
+        // [FIX] Use date from filter instead of new Date() to match current view
+        const date = getDateFromFilter(filter);
+        const newTransaction: SavingsTransaction = { 
+            id: Date.now().toString(), 
+            date: date, 
+            amount: financialStatus, 
+            type: 'deposit', 
+            note: 'Cất tiền dư' 
+        }; 
+        setSavingsHistory(prev => [...prev, newTransaction]); 
+    };
+
+    const handleSavingsWithdraw = (amount: number) => { 
+        if (amount > 0 && amount <= currentSavingsBalance) { 
+            // [FIX] Use date from filter
+            const date = getDateFromFilter(filter);
+            setSavingsHistory(prev => [...prev, { id: Date.now().toString(), date: date, amount, type: 'withdrawal', note: 'Rút tiêu dùng' }]); 
+            setIncomeLogs(p => [...p, { id: Date.now().toString(), amount, date: date, isSavingsWithdrawal: true }]); 
+        } 
+    };
     const handleFoodChange = (amount: number) => { 
         const date = getDateFromFilter(filter);
         if (amount !== 0) setFoodLogs(p => [...p, { id: Date.now().toString(), amount, date: date }]); 
