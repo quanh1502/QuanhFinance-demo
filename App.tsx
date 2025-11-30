@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 // [MODIFIED] Removed 'Debt' from import to use local definition
 import { FilterState, GasLog, SeasonalTheme, ExpenseLog, DebtTransaction, IncomeLog, FoodLog, Holiday, SavingsTransaction } from './types';
-import { TaurusIcon, StarIcon, SnowflakeIcon, FilterIcon, GasPumpIcon, WifiIcon, FoodIcon, PiggyBankIcon, TargetIcon, ChartLineIcon, WarningIcon, PlusIcon, CheckIcon, CalendarIcon, TagIcon, MoneyBillIcon, BoltIcon, SaveIcon, CircleIcon, CheckCircleIcon, HistoryIcon, HourglassIcon, CloseIcon, ListIcon, TrashIcon, CreditCardIcon, RepeatIcon, EditIcon, ShoppingBagIcon, MinusIcon, CalendarPlusIcon, PlaneIcon, WalletIcon, SunIcon, ArrowRightIcon, ExchangeIcon, CloudArrowUpIcon, CloudArrowDownIcon } from './components/icons';
+import { TaurusIcon, StarIcon, SnowflakeIcon, FilterIcon, GasPumpIcon, WifiIcon, FoodIcon, PiggyBankIcon, TargetIcon, ChartLineIcon, WarningIcon, PlusIcon, CheckIcon, CalendarIcon, TagIcon, MoneyBillIcon, BoltIcon, SaveIcon, CircleIcon, CheckCircleIcon, HistoryIcon, HourglassIcon, CloseIcon, ListIcon, TrashIcon, CreditCardIcon, RepeatIcon, EditIcon, ShoppingBagIcon, MinusIcon, CalendarPlusIcon, PlaneIcon, WalletIcon, SunIcon, ArrowRightIcon, ExchangeIcon, CloudArrowUpIcon, CloudArrowDownIcon, TargetIcon as GoalIcon } from './components/icons';
 import { formatDate, formatDateTime, daysBetween, getWeekNumber, getWeekRange, isDateInFilter, MONTH_NAMES, getUpcomingHolidays } from './utils/date';
 import Header from './components/Header';
 import FilterModal from './components/FilterModal';
@@ -200,7 +200,7 @@ const BudgetRow: React.FC<BudgetRowProps> = ({ icon, label, budget, actual, onBu
     );
 };
 
-// --- SIMULATION VIEW COMPONENT ---
+// --- [RESTORED] SIMULATION VIEW COMPONENT ---
 interface SimulationViewProps {
     theme: SeasonalTheme;
     activeDebts: Debt[];
@@ -353,6 +353,220 @@ const SimulationView: React.FC<SimulationViewProps> = ({ theme, activeDebts, onC
     );
 };
 
+// --- [NEW] STRATEGIC VIEW COMPONENT ---
+interface StrategicViewProps {
+    theme: SeasonalTheme;
+    debts: Debt[];
+    savingsBalance: number;
+    onClose: () => void;
+}
+
+const StrategicView: React.FC<StrategicViewProps> = ({ theme, debts, savingsBalance, onClose }) => {
+    // Config States
+    const [config, setConfig] = useState({
+        startDate: '2025-12-12',
+        tetDate: '2026-02-17',
+        internshipDate: '2026-03-01',
+        weeklyIncome: 0,
+        weeklyFood: 315000,
+        weeklyMisc: 100000,
+        tetGoal: 3000000, // Goal for Tet shopping
+        bufferGoal: 5000000 // Goal for Internship buffer
+    });
+
+    const [plan, setPlan] = useState<any[]>([]);
+
+    // Logic to generate the plan
+    useEffect(() => {
+        if (!config.weeklyIncome) return;
+
+        const start = new Date(config.startDate);
+        const end = new Date(config.internshipDate); // Plan until internship starts
+        const weeks = [];
+        let current = new Date(start);
+        let cumulativeSavings = savingsBalance;
+
+        // Loop week by week
+        while (current < end) {
+            const weekStart = new Date(current);
+            const weekEnd = new Date(current.getTime() + 6 * 86400000);
+            
+            // 1. Base Income
+            let income = config.weeklyIncome;
+            
+            // 2. Fixed & Variable Expenses
+            let expense = config.weeklyFood + config.weeklyMisc;
+
+            // 3. Smart Debt Calculation
+            let debtPayment = 0;
+            const debtDetails: string[] = [];
+
+            debts.forEach(d => {
+                const remaining = d.totalAmount - d.amountPaid;
+                if (remaining <= 0) return;
+
+                if (d.repaymentType === 'fixed') {
+                    // Check if "due day" falls in this week
+                    // Assuming monthlyInstallment is set
+                    const dueDay = d.dueDate.getDate(); // e.g., 5th
+                    
+                    // Simple check: does the week cover the due day of the current month/next month?
+                    // We check if any date in [weekStart, weekEnd] has date() == dueDay
+                    let hasDueDay = false;
+                    for (let t = new Date(weekStart); t <= weekEnd; t.setDate(t.getDate() + 1)) {
+                        if (t.getDate() === dueDay) hasDueDay = true;
+                    }
+
+                    if (hasDueDay) {
+                        const amount = d.monthlyInstallment || 0;
+                        debtPayment += amount;
+                        debtDetails.push(`${d.name}: -${amount.toLocaleString()}đ (Định kỳ)`);
+                    }
+                } else {
+                    // Flexible: Suggested weekly payment
+                    // Recalculate weeks left from NOW (weekStart) to DueDate
+                    const daysToDue = daysBetween(weekStart, d.dueDate);
+                    if (daysToDue > 0) {
+                        const weeksLeft = Math.max(1, Math.ceil(daysToDue / 7));
+                        const weekly = Math.ceil(remaining / weeksLeft);
+                        debtPayment += weekly;
+                        // debtDetails.push(`${d.name}: -${weekly.toLocaleString()}đ (Tích lũy)`);
+                    }
+                }
+            });
+
+            const net = income - expense - debtPayment;
+            cumulativeSavings += net;
+
+            weeks.push({
+                start: weekStart,
+                end: weekEnd,
+                income,
+                expense,
+                debtPayment,
+                debtDetails,
+                net,
+                balance: cumulativeSavings,
+                isTet: weekStart <= new Date(config.tetDate) && weekEnd >= new Date(config.tetDate)
+            });
+
+            // Next week
+            current.setDate(current.getDate() + 7);
+        }
+        setPlan(weeks);
+    }, [config, debts, savingsBalance]);
+
+    const totalGoal = config.tetGoal + config.bufferGoal;
+    const finalBalance = plan.length > 0 ? plan[plan.length - 1].balance : savingsBalance;
+    const progress = Math.min((finalBalance / totalGoal) * 100, 100);
+
+    return (
+        <div className="space-y-6 animate-fade-in-up">
+            <div className={`${theme.cardBg} p-6 rounded-xl shadow-lg border-l-4 border-indigo-500`}>
+                <div className="flex justify-between items-start mb-6">
+                    <div>
+                        <h3 className={`text-2xl font-bold ${theme.primaryTextColor} flex items-center gap-2`}>
+                            <GoalIcon className="text-indigo-400" /> Chiến lược Tết & Thực Tập
+                        </h3>
+                        <p className={`text-sm ${theme.secondaryTextColor}`}>Lộ trình tài chính từ 12/12 đến tháng 3</p>
+                    </div>
+                    <button onClick={onClose} className="bg-slate-800 text-slate-300 px-3 py-1.5 rounded hover:bg-slate-700 text-sm">Đóng</button>
+                </div>
+
+                {/* Configuration Panel */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                    <div className="bg-slate-900/50 p-4 rounded-lg border border-slate-700">
+                        <h4 className="text-indigo-400 font-bold mb-3 uppercase text-xs">1. Thiết lập Nguồn lực (Tuần)</h4>
+                        <div className="space-y-3">
+                            <div>
+                                <label className="text-xs text-slate-400 block mb-1">Thu nhập dự kiến (Lương/Tuần)</label>
+                                <CurrencyInput value={config.weeklyIncome} onValueChange={v => setConfig({...config, weeklyIncome: v})} className="input w-full" placeholder="Nhập lương tuần..." />
+                            </div>
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label className="text-xs text-slate-400 block mb-1">Ăn uống (Tuần)</label>
+                                    <CurrencyInput value={config.weeklyFood} onValueChange={v => setConfig({...config, weeklyFood: v})} className="input w-full" />
+                                </div>
+                                <div>
+                                    <label className="text-xs text-slate-400 block mb-1">Sinh hoạt (Tuần)</label>
+                                    <CurrencyInput value={config.weeklyMisc} onValueChange={v => setConfig({...config, weeklyMisc: v})} className="input w-full" />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="bg-slate-900/50 p-4 rounded-lg border border-slate-700">
+                        <h4 className="text-emerald-400 font-bold mb-3 uppercase text-xs">2. Thiết lập Mục tiêu</h4>
+                        <div className="space-y-3">
+                            <div>
+                                <label className="text-xs text-slate-400 block mb-1">Mục tiêu sắm Tết</label>
+                                <CurrencyInput value={config.tetGoal} onValueChange={v => setConfig({...config, tetGoal: v})} className="input w-full" />
+                            </div>
+                            <div>
+                                <label className="text-xs text-slate-400 block mb-1">Dự phòng Thực tập (Tháng 3)</label>
+                                <CurrencyInput value={config.bufferGoal} onValueChange={v => setConfig({...config, bufferGoal: v})} className="input w-full" />
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Analysis Result */}
+                {config.weeklyIncome > 0 && (
+                    <div className="animate-fade-in-up">
+                        <div className="bg-slate-800 p-4 rounded-t-xl border-b border-slate-700 flex justify-between items-center">
+                            <div>
+                                <p className="text-slate-400 text-xs">Dự kiến tích lũy đến 01/03/2026</p>
+                                <p className={`text-2xl font-bold ${finalBalance >= totalGoal ? 'text-green-400' : 'text-amber-400'}`}>{finalBalance.toLocaleString('vi-VN')}đ</p>
+                            </div>
+                            <div className="text-right">
+                                <p className="text-slate-400 text-xs">Mục tiêu: {totalGoal.toLocaleString()}đ</p>
+                                <div className="flex items-center gap-2">
+                                    <div className="w-32 bg-slate-700 h-2 rounded-full mt-1">
+                                        <div className={`h-2 rounded-full ${progress >= 100 ? 'bg-green-500' : 'bg-amber-500'}`} style={{width: `${progress}%`}}></div>
+                                    </div>
+                                    <span className="text-xs font-bold text-white">{Math.round(progress)}%</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Timeline */}
+                        <div className="bg-black/20 rounded-b-xl overflow-hidden">
+                            <div className="max-h-80 overflow-y-auto custom-scrollbar p-2 space-y-2">
+                                {plan.map((week, idx) => (
+                                    <div key={idx} className={`p-3 rounded border ${week.isTet ? 'bg-red-900/20 border-red-500/50' : 'bg-slate-800/40 border-slate-700/50'} flex justify-between items-center`}>
+                                        <div className="flex-1">
+                                            <div className="flex items-center gap-2 mb-1">
+                                                <span className="text-xs font-bold text-slate-300">Tuần {formatDate(week.start).slice(0,5)} - {formatDate(week.end).slice(0,5)}</span>
+                                                {week.isTet && <span className="text-[10px] bg-red-600 text-white px-1.5 rounded font-bold">Tết Nguyên Đán</span>}
+                                            </div>
+                                            <div className="text-xs text-slate-500 flex gap-3">
+                                                <span className="text-emerald-400">+{week.income.toLocaleString()}</span>
+                                                <span className="text-red-400">-{week.expense.toLocaleString()} (Chi)</span>
+                                                {week.debtPayment > 0 && <span className="text-amber-400">-{week.debtPayment.toLocaleString()} (Nợ)</span>}
+                                            </div>
+                                            {week.debtDetails.length > 0 && (
+                                                <div className="mt-1 pl-2 border-l-2 border-amber-500/30">
+                                                    {week.debtDetails.map((d: string, i: number) => <p key={i} className="text-[9px] text-amber-500/80">{d}</p>)}
+                                                </div>
+                                            )}
+                                        </div>
+                                        <div className="text-right">
+                                            <p className={`font-bold text-sm ${week.net >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                                {week.net > 0 ? '+' : ''}{week.net.toLocaleString()}
+                                            </p>
+                                            <p className="text-[10px] text-slate-500">Dư: {week.balance.toLocaleString()}</p>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
+
 // --- APP COMPONENT ---
 const App: React.FC = () => {
     const [user, setUser] = useState<User | null>(null);
@@ -373,7 +587,7 @@ const App: React.FC = () => {
 
     // --- UI States ---
     const [uiMode, setUiMode] = useState<'desktop' | 'mobile'>(() => (localStorage.getItem(UI_MODE_KEY) as 'desktop' | 'mobile') || 'desktop');
-    const [view, setView] = useState<'dashboard' | 'planning' | 'simulation'>('dashboard');
+    const [view, setView] = useState<'dashboard' | 'planning' | 'simulation' | 'strategy'>('dashboard');
     const [currentDate] = useState(new Date());
     const [filter, setFilter] = useState<FilterState>({ type: 'week', year: currentDate.getFullYear(), week: getWeekNumber(currentDate)[1] });
     
@@ -945,13 +1159,14 @@ const App: React.FC = () => {
                 <div className="flex gap-4 mb-6 justify-center">
                     <button onClick={() => setView('dashboard')} className={`px-6 py-2 rounded-full font-bold transition-all ${view === 'dashboard' ? 'bg-amber-400 text-slate-900 shadow-lg scale-105' : 'bg-slate-800 text-slate-400'}`}>Tổng quan</button>
                     <button onClick={() => setView('planning')} className={`px-6 py-2 rounded-full font-bold transition-all ${view === 'planning' ? 'bg-purple-500 text-white shadow-lg scale-105' : 'bg-slate-800 text-slate-400'}`}>Kế hoạch</button>
-                    <button onClick={() => setView('simulation')} className={`px-6 py-2 rounded-full font-bold transition-all ${view === 'simulation' ? 'bg-emerald-500 text-white shadow-lg scale-105' : 'bg-slate-800 text-slate-400'}`}>Giả lập</button>
+                    <button onClick={() => setView('strategy')} className={`px-6 py-2 rounded-full font-bold transition-all ${view === 'strategy' ? 'bg-indigo-500 text-white shadow-lg scale-105' : 'bg-slate-800 text-slate-400'}`}>Chiến lược</button>
                 </div>
                 {loadingData ? <div className="text-center text-white py-10 animate-pulse">
                     {syncStatus === 'syncing' ? <div className="flex justify-center items-center gap-2"><CloudArrowUpIcon className="animate-bounce"/> Đang đồng bộ...</div> : "Đang tải dữ liệu..."}
                 </div> : (
                     view === 'dashboard' ? renderDashboard() : 
                     view === 'planning' ? renderPlanning() : 
+                    view === 'strategy' ? <StrategicView theme={seasonalTheme} debts={debts.filter(d => d.amountPaid < d.totalAmount)} savingsBalance={currentSavingsBalance} onClose={() => setView('dashboard')} /> :
                     <SimulationView theme={seasonalTheme} activeDebts={debts.filter(d => d.amountPaid < d.totalAmount)} onClose={() => setView('dashboard')} />
                 )}
                 
