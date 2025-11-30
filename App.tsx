@@ -15,6 +15,7 @@ import { doc, onSnapshot, setDoc, getDoc } from "firebase/firestore";
 import { auth, googleProvider, db } from "./firebase";
 
 const STORAGE_KEY = 'spending_app_data_v1';
+const STRATEGY_KEY = 'spending_app_strategy_v1'; // [NEW] Key to save the strategy
 const UI_MODE_KEY = 'spending_app_ui_mode';
 
 // --- [ADDED] Local Debt Interface Definition to fix TS errors ---
@@ -359,11 +360,14 @@ interface StrategicViewProps {
     debts: Debt[];
     savingsBalance: number;
     onClose: () => void;
+    // [NEW] Prop to save plan
+    onSavePlan: (config: any) => void;
+    initialConfig: any;
 }
 
-const StrategicView: React.FC<StrategicViewProps> = ({ theme, debts, savingsBalance, onClose }) => {
-    // Config States
-    const [config, setConfig] = useState({
+const StrategicView: React.FC<StrategicViewProps> = ({ theme, debts, savingsBalance, onClose, onSavePlan, initialConfig }) => {
+    // Config States - load from initial or default
+    const [config, setConfig] = useState(initialConfig || {
         startDate: '2025-12-12',
         tetDate: '2026-02-17',
         internshipDate: '2026-03-01',
@@ -375,6 +379,7 @@ const StrategicView: React.FC<StrategicViewProps> = ({ theme, debts, savingsBala
     });
 
     const [plan, setPlan] = useState<any[]>([]);
+    const [selectedWeekDebt, setSelectedWeekDebt] = useState<{ weekStr: string, details: string[] } | null>(null);
 
     // Logic to generate the plan
     useEffect(() => {
@@ -405,14 +410,17 @@ const StrategicView: React.FC<StrategicViewProps> = ({ theme, debts, savingsBala
                 const remaining = d.totalAmount - d.amountPaid;
                 if (remaining <= 0) return;
 
+                // Skip counting debt if it is BNPL (assuming handled by existing balance or other means) - Wait, in cashflow, payment is payment.
+                // If BNPL is used for daily expense, we counted expense. Paying it off is cash out.
+                // HOWEVER, user says "hệ thống đang set nhầm nợ tháng".
+                // Let's ensure we only count payment if due.
+
                 if (d.repaymentType === 'fixed') {
                     // Check if "due day" falls in this week
-                    // Assuming monthlyInstallment is set
                     const dueDay = d.dueDate.getDate(); // e.g., 5th
                     
-                    // Simple check: does the week cover the due day of the current month/next month?
-                    // We check if any date in [weekStart, weekEnd] has date() == dueDay
                     let hasDueDay = false;
+                    // Iterate through days of week
                     for (let t = new Date(weekStart); t <= weekEnd; t.setDate(t.getDate() + 1)) {
                         if (t.getDate() === dueDay) hasDueDay = true;
                     }
@@ -420,17 +428,29 @@ const StrategicView: React.FC<StrategicViewProps> = ({ theme, debts, savingsBala
                     if (hasDueDay) {
                         const amount = d.monthlyInstallment || 0;
                         debtPayment += amount;
-                        debtDetails.push(`${d.name}: -${amount.toLocaleString()}đ (Định kỳ)`);
+                        debtDetails.push(`${d.name}: -${amount.toLocaleString()}đ (Đến hạn ngày ${dueDay})`);
                     }
                 } else {
                     // Flexible: Suggested weekly payment
-                    // Recalculate weeks left from NOW (weekStart) to DueDate
+                    // Logic: remaining / weeksLeft
                     const daysToDue = daysBetween(weekStart, d.dueDate);
+                    
+                    // Only suggest payment if due date is in future
                     if (daysToDue > 0) {
                         const weeksLeft = Math.max(1, Math.ceil(daysToDue / 7));
+                        // Don't be too aggressive if weeksLeft is large.
+                        // If weeksLeft is 1, pay all. 
                         const weekly = Math.ceil(remaining / weeksLeft);
+                        
+                        // [ADJUSTMENT] If weekly amount is ridiculously high (e.g. > income/2), maybe due date is wrong?
+                        // But this is a strategy view, it shows reality.
+                        
                         debtPayment += weekly;
-                        // debtDetails.push(`${d.name}: -${weekly.toLocaleString()}đ (Tích lũy)`);
+                        debtDetails.push(`${d.name}: -${weekly.toLocaleString()}đ (Chia nhỏ ${weeksLeft} tuần)`);
+                    } else if (daysToDue > -7) {
+                         // Due/Overdue this week
+                         debtPayment += remaining;
+                         debtDetails.push(`${d.name}: -${remaining.toLocaleString()}đ (Tất toán ngay!)`);
                     }
                 }
             });
@@ -470,7 +490,10 @@ const StrategicView: React.FC<StrategicViewProps> = ({ theme, debts, savingsBala
                         </h3>
                         <p className={`text-sm ${theme.secondaryTextColor}`}>Lộ trình tài chính từ 12/12 đến tháng 3</p>
                     </div>
-                    <button onClick={onClose} className="bg-slate-800 text-slate-300 px-3 py-1.5 rounded hover:bg-slate-700 text-sm">Đóng</button>
+                    <div className="flex gap-2">
+                         <button onClick={() => onSavePlan(config)} className="bg-emerald-600 text-white px-3 py-1.5 rounded hover:bg-emerald-500 text-sm font-bold flex items-center gap-1"><SaveIcon className="w-3 h-3"/> Lưu Kế hoạch</button>
+                        <button onClick={onClose} className="bg-slate-800 text-slate-300 px-3 py-1.5 rounded hover:bg-slate-700 text-sm">Đóng</button>
+                    </div>
                 </div>
 
                 {/* Configuration Panel */}
@@ -496,15 +519,27 @@ const StrategicView: React.FC<StrategicViewProps> = ({ theme, debts, savingsBala
                     </div>
 
                     <div className="bg-slate-900/50 p-4 rounded-lg border border-slate-700">
-                        <h4 className="text-emerald-400 font-bold mb-3 uppercase text-xs">2. Thiết lập Mục tiêu</h4>
+                        <h4 className="text-emerald-400 font-bold mb-3 uppercase text-xs">2. Thiết lập Mục tiêu & Thời gian</h4>
                         <div className="space-y-3">
-                            <div>
-                                <label className="text-xs text-slate-400 block mb-1">Mục tiêu sắm Tết</label>
-                                <CurrencyInput value={config.tetGoal} onValueChange={v => setConfig({...config, tetGoal: v})} className="input w-full" />
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label className="text-xs text-slate-400 block mb-1">Ngày bắt đầu</label>
+                                    <input type="date" value={config.startDate} onChange={(e) => setConfig({...config, startDate: e.target.value})} className="input w-full text-sm" />
+                                </div>
+                                <div>
+                                    <label className="text-xs text-slate-400 block mb-1">Ngày kết thúc (Thực tập)</label>
+                                    <input type="date" value={config.internshipDate} onChange={(e) => setConfig({...config, internshipDate: e.target.value})} className="input w-full text-sm" />
+                                </div>
                             </div>
-                            <div>
-                                <label className="text-xs text-slate-400 block mb-1">Dự phòng Thực tập (Tháng 3)</label>
-                                <CurrencyInput value={config.bufferGoal} onValueChange={v => setConfig({...config, bufferGoal: v})} className="input w-full" />
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label className="text-xs text-slate-400 block mb-1">Mục tiêu sắm Tết</label>
+                                    <CurrencyInput value={config.tetGoal} onValueChange={v => setConfig({...config, tetGoal: v})} className="input w-full" />
+                                </div>
+                                <div>
+                                    <label className="text-xs text-slate-400 block mb-1">Dự phòng Thực tập</label>
+                                    <CurrencyInput value={config.bufferGoal} onValueChange={v => setConfig({...config, bufferGoal: v})} className="input w-full" />
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -515,7 +550,7 @@ const StrategicView: React.FC<StrategicViewProps> = ({ theme, debts, savingsBala
                     <div className="animate-fade-in-up">
                         <div className="bg-slate-800 p-4 rounded-t-xl border-b border-slate-700 flex justify-between items-center">
                             <div>
-                                <p className="text-slate-400 text-xs">Dự kiến tích lũy đến 01/03/2026</p>
+                                <p className="text-slate-400 text-xs">Dự kiến tích lũy đến {formatDate(new Date(config.internshipDate))}</p>
                                 <p className={`text-2xl font-bold ${finalBalance >= totalGoal ? 'text-green-400' : 'text-amber-400'}`}>{finalBalance.toLocaleString('vi-VN')}đ</p>
                             </div>
                             <div className="text-right">
@@ -530,25 +565,27 @@ const StrategicView: React.FC<StrategicViewProps> = ({ theme, debts, savingsBala
                         </div>
 
                         {/* Timeline */}
-                        <div className="bg-black/20 rounded-b-xl overflow-hidden">
+                        <div className="bg-black/20 rounded-b-xl overflow-hidden relative">
                             <div className="max-h-80 overflow-y-auto custom-scrollbar p-2 space-y-2">
                                 {plan.map((week, idx) => (
-                                    <div key={idx} className={`p-3 rounded border ${week.isTet ? 'bg-red-900/20 border-red-500/50' : 'bg-slate-800/40 border-slate-700/50'} flex justify-between items-center`}>
+                                    <div key={idx} className={`p-3 rounded border ${week.isTet ? 'bg-red-900/20 border-red-500/50' : 'bg-slate-800/40 border-slate-700/50'} flex justify-between items-center relative group`}>
                                         <div className="flex-1">
                                             <div className="flex items-center gap-2 mb-1">
                                                 <span className="text-xs font-bold text-slate-300">Tuần {formatDate(week.start).slice(0,5)} - {formatDate(week.end).slice(0,5)}</span>
                                                 {week.isTet && <span className="text-[10px] bg-red-600 text-white px-1.5 rounded font-bold">Tết Nguyên Đán</span>}
                                             </div>
-                                            <div className="text-xs text-slate-500 flex gap-3">
+                                            <div className="text-xs text-slate-500 flex gap-3 items-center">
                                                 <span className="text-emerald-400">+{week.income.toLocaleString()}</span>
                                                 <span className="text-red-400">-{week.expense.toLocaleString()} (Chi)</span>
-                                                {week.debtPayment > 0 && <span className="text-amber-400">-{week.debtPayment.toLocaleString()} (Nợ)</span>}
+                                                {week.debtPayment > 0 && (
+                                                    <span 
+                                                        className="text-amber-400 cursor-pointer underline decoration-dotted hover:text-amber-300"
+                                                        onClick={() => setSelectedWeekDebt({weekStr: `${formatDate(week.start)} - ${formatDate(week.end)}`, details: week.debtDetails})}
+                                                    >
+                                                        -{week.debtPayment.toLocaleString()} (Nợ) [Chi tiết]
+                                                    </span>
+                                                )}
                                             </div>
-                                            {week.debtDetails.length > 0 && (
-                                                <div className="mt-1 pl-2 border-l-2 border-amber-500/30">
-                                                    {week.debtDetails.map((d: string, i: number) => <p key={i} className="text-[9px] text-amber-500/80">{d}</p>)}
-                                                </div>
-                                            )}
                                         </div>
                                         <div className="text-right">
                                             <p className={`font-bold text-sm ${week.net >= 0 ? 'text-green-400' : 'text-red-400'}`}>
@@ -559,6 +596,19 @@ const StrategicView: React.FC<StrategicViewProps> = ({ theme, debts, savingsBala
                                     </div>
                                 ))}
                             </div>
+                            
+                            {/* Debt Detail Popover */}
+                            {selectedWeekDebt && (
+                                <div className="absolute top-0 left-0 right-0 bottom-0 bg-black/90 flex flex-col justify-center items-center p-4 z-10">
+                                    <div className="bg-slate-900 border border-slate-600 p-4 rounded-lg w-full max-w-xs shadow-2xl">
+                                        <h5 className="font-bold text-white mb-2 text-sm border-b border-slate-700 pb-1">Chi tiết trả nợ tuần: {selectedWeekDebt.weekStr}</h5>
+                                        <div className="space-y-1 mb-3">
+                                            {selectedWeekDebt.details.map((d, i) => <p key={i} className="text-xs text-amber-400">{d}</p>)}
+                                        </div>
+                                        <button onClick={() => setSelectedWeekDebt(null)} className="w-full bg-slate-700 text-white text-xs py-1.5 rounded">Đóng</button>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     </div>
                 )}
@@ -584,6 +634,9 @@ const App: React.FC = () => {
     const [foodBudget, setFoodBudget] = useState<number>(315000);
     const [miscBudget, setMiscBudget] = useState<number>(100000);
     const [holidays, setHolidays] = useState<Holiday[]>([]);
+    
+    // [NEW] Strategy State
+    const [savedStrategy, setSavedStrategy] = useState<any>(null);
 
     // --- UI States ---
     const [uiMode, setUiMode] = useState<'desktop' | 'mobile'>(() => (localStorage.getItem(UI_MODE_KEY) as 'desktop' | 'mobile') || 'desktop');
@@ -673,6 +726,10 @@ const App: React.FC = () => {
                         setSavingsHistory(parsed.savingsHistory || []);
                         setFoodBudget(parsed.foodBudget || 315000);
                         setMiscBudget(parsed.miscBudget || 100000);
+                        
+                        // Load saved strategy if exists
+                        if (data.savedStrategy) setSavedStrategy(data.savedStrategy);
+
                         const upcoming = getUpcomingHolidays();
                         if (parsed.holidays) {
                             const merged = upcoming.map(freshH => {
@@ -698,6 +755,10 @@ const App: React.FC = () => {
                     setFoodBudget(localData.foodBudget || 315000);
                     setMiscBudget(localData.miscBudget || 100000);
                     setHolidays(getUpcomingHolidays());
+                    
+                    // Try load strategy from LocalStorage
+                    const savedStrat = localStorage.getItem(STRATEGY_KEY);
+                    if (savedStrat) setSavedStrategy(JSON.parse(savedStrat));
                 }
                 setLoadingData(false);
             }
@@ -718,10 +779,11 @@ const App: React.FC = () => {
             return;
         }
 
-        const dataToSave = { gasHistory, lastWifiPayment, debts, incomeLogs, foodLogs, miscLogs, savingsHistory, foodBudget, miscBudget, holidays };
+        const dataToSave = { gasHistory, lastWifiPayment, debts, incomeLogs, foodLogs, miscLogs, savingsHistory, foodBudget, miscBudget, holidays, savedStrategy };
         
         // Lưu LocalStorage
         localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));
+        if (savedStrategy) localStorage.setItem(STRATEGY_KEY, JSON.stringify(savedStrategy));
 
         if (user) {
             setSyncStatus('syncing');
@@ -751,13 +813,18 @@ const App: React.FC = () => {
             
             return () => clearTimeout(timeoutId);
         }
-    }, [gasHistory, lastWifiPayment, debts, incomeLogs, foodLogs, miscLogs, savingsHistory, foodBudget, miscBudget, holidays, user, loadingData]);
+    }, [gasHistory, lastWifiPayment, debts, incomeLogs, foodLogs, miscLogs, savingsHistory, foodBudget, miscBudget, holidays, user, loadingData, savedStrategy]);
     // --- FIX RACE CONDITION END ---
 
     useEffect(() => { localStorage.setItem(UI_MODE_KEY, uiMode); }, [uiMode]);
 
     const handleLogin = async () => { try { await signInWithPopup(auth, googleProvider); } catch (error: any) { alert("Lỗi đăng nhập: " + error.message); } };
     const handleLogout = async () => { if(confirm("Bạn muốn đăng xuất?")) { await signOut(auth); window.location.reload(); } };
+
+    const handleSaveStrategy = (config: any) => {
+        setSavedStrategy(config);
+        alert("Đã lưu kế hoạch chiến lược! Bạn có thể theo dõi tiến độ ở màn hình chính.");
+    };
 
     const seasonalTheme = useMemo<SeasonalTheme>(() => {
         const month = currentDate.getMonth();
@@ -950,8 +1017,64 @@ const App: React.FC = () => {
         return `Năm ${filter.year}`;
     };
 
+    // [NEW] Strategy Comparison Widget (Dashboard)
+    const getStrategyComparison = () => {
+        if (!savedStrategy) return null;
+
+        // Find relevant week in strategy plan
+        // Strategy config has StartDate. Calculate offset.
+        const planStart = new Date(savedStrategy.startDate);
+        // If current view filter is WEEK, we try to match it.
+        // For simplicity, let's match the CURRENT REAL WORLD DATE to the plan
+        const now = new Date();
+        const daysSinceStart = daysBetween(planStart, now);
+        
+        // We want to find the week index in the plan
+        const weekIndex = Math.floor(daysSinceStart / 7);
+
+        // If we are outside the plan window (before start or way after)
+        if (weekIndex < 0) return { status: 'not_started', message: "Kế hoạch chưa bắt đầu" };
+        // We assume the plan goes for ~12 weeks based on typical setup
+        if (weekIndex > 20) return { status: 'ended', message: "Kế hoạch đã kết thúc" };
+
+        // We need to RE-CALCULATE the plan array based on saved config to get the numbers for that week
+        // Doing full recalc is heavy, but necessary since we only saved config.
+        // OR we could have saved the 'plan' array. But let's calc on fly for accuracy if logic changes.
+        // Simplified calc for just this week's EXPECTED balance:
+        // Actually, it's easier to check TOTAL saved vs EXPECTED saved by this week.
+        
+        // Let's estimate "Expected Savings" = (WeeklyIncome - WeeklyExpense - AvgDebt) * WeekIndex
+        // This is rough.
+        
+        // Better: Recalculate properly
+        const planEnd = new Date(savedStrategy.internshipDate);
+        let simCurrent = new Date(planStart);
+        let expectedBalance = currentSavingsBalance; // Starting point? No, starting point was when plan made. 
+        // ISSUE: We don't know the savings balance WHEN the plan was made. 
+        // WORKAROUND: We track "Weekly Surplus" target.
+        
+        const weeklyTarget = savedStrategy.weeklyIncome - savedStrategy.weeklyFood - savedStrategy.weeklyMisc;
+        // Subtract avg debt... this is hard without full calc.
+        
+        return { status: 'active', weekIndex: weekIndex + 1, message: `Đang trong tuần ${weekIndex + 1} của kế hoạch`, target: weeklyTarget };
+    };
+
+    const strategyStatus = useMemo(getStrategyComparison, [savedStrategy, currentSavingsBalance]);
+
     const renderDashboard = () => (
         <>
+             {/* [NEW] Strategy Tracking Widget */}
+             {savedStrategy && strategyStatus && strategyStatus.status === 'active' && (
+                <div className="mb-6 animate-fade-in-up bg-indigo-900/40 border border-indigo-500/50 p-4 rounded-lg flex justify-between items-center">
+                    <div>
+                        <p className="text-xs text-indigo-300 font-bold uppercase mb-1">Theo dõi Chiến lược</p>
+                        <p className="text-white font-bold">{strategyStatus.message}</p>
+                        <p className="text-xs text-slate-400">Mục tiêu dư hàng tuần: <span className="text-emerald-400">+{strategyStatus.target.toLocaleString()}đ</span> (chưa trừ nợ)</p>
+                    </div>
+                    <button onClick={() => setView('strategy')} className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs px-3 py-2 rounded font-bold">Xem chi tiết</button>
+                </div>
+             )}
+
              <div className="mb-4 animate-fade-in-up flex items-center justify-between bg-black/20 p-2 rounded-full border border-white/10">
                 <button onClick={handlePrevFilter} className="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-white"><ArrowRightIcon className="w-4 h-4 rotate-180" /></button>
                 <div className="flex items-center gap-2">
@@ -1166,7 +1289,7 @@ const App: React.FC = () => {
                 </div> : (
                     view === 'dashboard' ? renderDashboard() : 
                     view === 'planning' ? renderPlanning() : 
-                    view === 'strategy' ? <StrategicView theme={seasonalTheme} debts={debts.filter(d => d.amountPaid < d.totalAmount)} savingsBalance={currentSavingsBalance} onClose={() => setView('dashboard')} /> :
+                    view === 'strategy' ? <StrategicView theme={seasonalTheme} debts={debts.filter(d => d.amountPaid < d.totalAmount)} savingsBalance={currentSavingsBalance} onClose={() => setView('dashboard')} onSavePlan={handleSaveStrategy} initialConfig={savedStrategy} /> :
                     <SimulationView theme={seasonalTheme} activeDebts={debts.filter(d => d.amountPaid < d.totalAmount)} onClose={() => setView('dashboard')} />
                 )}
                 
