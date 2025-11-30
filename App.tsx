@@ -367,17 +367,19 @@ interface StrategicViewProps {
 }
 
 const StrategicView: React.FC<StrategicViewProps> = ({ theme, debts, savingsBalance, onClose, onSavePlan, onDeletePlan, initialConfig }) => {
-    // [MODIFIED] Generic Config State
-    const [config, setConfig] = useState(initialConfig || {
-        planName: 'Kế hoạch Mới',
-        startDate: new Date().toISOString().slice(0, 10),
-        endDate: new Date(new Date().getTime() + 90 * 86400000).toISOString().slice(0, 10), // Default 3 months
-        weeklyIncome: 0,
-        weeklyFood: 315000,
-        weeklyMisc: 100000,
-        goals: [
-            { id: 'g1', name: 'Mục tiêu 1', amount: 0 }
-        ]
+    // [MODIFIED] Generic Config State with safe initialization
+    const [config, setConfig] = useState(() => {
+        const defaults = {
+            planName: 'Kế hoạch Mới',
+            startDate: new Date().toISOString().slice(0, 10),
+            endDate: new Date(new Date().getTime() + 90 * 86400000).toISOString().slice(0, 10), // Default 3 months
+            weeklyIncome: 0,
+            weeklyFood: 315000,
+            weeklyMisc: 100000,
+            goals: [{ id: 'g1', name: 'Mục tiêu 1', amount: 0 }]
+        };
+        // Merge defaults with initialConfig to ensure 'goals' and other new fields exist
+        return { ...defaults, ...initialConfig };
     });
 
     const [plan, setPlan] = useState<any[]>([]);
@@ -385,23 +387,23 @@ const StrategicView: React.FC<StrategicViewProps> = ({ theme, debts, savingsBala
     
     // Helpers for Goal Management
     const addGoal = () => {
-        setConfig(prev => ({
+        setConfig((prev: any) => ({
             ...prev,
-            goals: [...prev.goals, { id: Date.now().toString(), name: '', amount: 0 }]
+            goals: [...(prev.goals || []), { id: Date.now().toString(), name: '', amount: 0 }]
         }));
     };
 
     const removeGoal = (id: string) => {
-        setConfig(prev => ({
+        setConfig((prev: any) => ({
             ...prev,
-            goals: prev.goals.filter((g: any) => g.id !== id)
+            goals: (prev.goals || []).filter((g: any) => g.id !== id)
         }));
     };
     
     const updateGoal = (id: string, field: string, value: any) => {
-        setConfig(prev => ({
+        setConfig((prev: any) => ({
             ...prev,
-            goals: prev.goals.map((g: any) => g.id === id ? { ...g, [field]: value } : g)
+            goals: (prev.goals || []).map((g: any) => g.id === id ? { ...g, [field]: value } : g)
         }));
     };
 
@@ -491,7 +493,8 @@ const StrategicView: React.FC<StrategicViewProps> = ({ theme, debts, savingsBala
         setPlan(weeks);
     }, [config, debts, savingsBalance]);
 
-    const totalGoal = config.goals.reduce((sum: number, g: any) => sum + g.amount, 0);
+    // [FIXED] Safe access to goals using optional chaining/default
+    const totalGoal = (config.goals || []).reduce((sum: number, g: any) => sum + g.amount, 0);
     const finalBalance = plan.length > 0 ? plan[plan.length - 1].balance : savingsBalance;
     const progress = totalGoal > 0 ? Math.max(0, Math.min((finalBalance / totalGoal) * 100, 100)) : 0;
 
@@ -559,7 +562,7 @@ const StrategicView: React.FC<StrategicViewProps> = ({ theme, debts, savingsBala
                             <button onClick={addGoal} className="text-xs bg-emerald-900 text-emerald-200 px-2 py-1 rounded hover:bg-emerald-800">+ Thêm</button>
                         </div>
                         <div className="space-y-2 flex-1 overflow-y-auto max-h-48 custom-scrollbar pr-1">
-                            {config.goals.map((g: any, idx: number) => (
+                            {(config.goals || []).map((g: any, idx: number) => (
                                 <div key={g.id} className="flex gap-2 items-center">
                                     <input 
                                         type="text" 
@@ -577,7 +580,7 @@ const StrategicView: React.FC<StrategicViewProps> = ({ theme, debts, savingsBala
                                     <button onClick={() => removeGoal(g.id)} className="text-slate-500 hover:text-red-400 px-1"><TrashIcon className="w-3 h-3"/></button>
                                 </div>
                             ))}
-                            {config.goals.length === 0 && <p className="text-slate-500 text-xs italic text-center mt-4">Chưa có mục tiêu nào.</p>}
+                            {(config.goals || []).length === 0 && <p className="text-slate-500 text-xs italic text-center mt-4">Chưa có mục tiêu nào.</p>}
                         </div>
                         <div className="mt-3 pt-3 border-t border-slate-700 flex justify-between items-center">
                             <span className="text-xs font-bold text-slate-400">TỔNG MỤC TIÊU:</span>
