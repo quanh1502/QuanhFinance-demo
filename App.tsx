@@ -908,6 +908,12 @@ const App: React.FC = () => {
         }
     };
 
+    const handleDeleteSavingsTransaction = (id: string) => {
+        if (confirm("Bạn có chắc muốn xóa giao dịch này? (Hành động này sẽ hoàn tác số dư quỹ)")) {
+            setSavingsHistory(prev => prev.filter(t => t.id !== id));
+        }
+    };
+
     const seasonalTheme = useMemo<SeasonalTheme>(() => {
         const month = currentDate.getMonth();
         const greetingName = user ? user.displayName?.split(' ').pop() : 'bạn';
