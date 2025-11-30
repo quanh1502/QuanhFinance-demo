@@ -362,10 +362,11 @@ interface StrategicViewProps {
     onClose: () => void;
     // [NEW] Prop to save plan
     onSavePlan: (config: any) => void;
+    onDeletePlan: () => void; // [NEW]
     initialConfig: any;
 }
 
-const StrategicView: React.FC<StrategicViewProps> = ({ theme, debts, savingsBalance, onClose, onSavePlan, initialConfig }) => {
+const StrategicView: React.FC<StrategicViewProps> = ({ theme, debts, savingsBalance, onClose, onSavePlan, onDeletePlan, initialConfig }) => {
     // Config States - load from initial or default
     const [config, setConfig] = useState(initialConfig || {
         startDate: '2025-12-12',
@@ -496,6 +497,10 @@ const StrategicView: React.FC<StrategicViewProps> = ({ theme, debts, savingsBala
                         <p className={`text-sm ${theme.secondaryTextColor}`}>Lộ trình tài chính từ 12/12 đến tháng 3</p>
                     </div>
                     <div className="flex gap-2">
+                        {/* [NEW] Delete Button */}
+                         {initialConfig && (
+                             <button onClick={onDeletePlan} className="bg-red-900/80 text-red-200 px-3 py-1.5 rounded hover:bg-red-800 text-sm font-bold flex items-center gap-1 border border-red-700/50"><TrashIcon className="w-3 h-3"/> Hủy</button>
+                         )}
                          <button onClick={() => onSavePlan(config)} className="bg-emerald-600 text-white px-3 py-1.5 rounded hover:bg-emerald-500 text-sm font-bold flex items-center gap-1"><SaveIcon className="w-3 h-3"/> Lưu Kế hoạch</button>
                         <button onClick={onClose} className="bg-slate-800 text-slate-300 px-3 py-1.5 rounded hover:bg-slate-700 text-sm">Đóng</button>
                     </div>
@@ -834,6 +839,14 @@ const App: React.FC = () => {
         alert("Đã lưu kế hoạch chiến lược! Bạn có thể theo dõi tiến độ ở màn hình chính.");
     };
 
+    // [NEW] Delete Strategy Handler
+    const handleDeleteStrategy = () => {
+        if (confirm("Bạn có chắc muốn hủy kế hoạch chiến lược hiện tại? Dữ liệu theo dõi sẽ bị xóa.")) {
+            setSavedStrategy(null);
+            localStorage.removeItem(STRATEGY_KEY);
+        }
+    };
+
     const seasonalTheme = useMemo<SeasonalTheme>(() => {
         const month = currentDate.getMonth();
         const greetingName = user ? user.displayName?.split(' ').pop() : 'bạn';
@@ -1140,7 +1153,7 @@ const App: React.FC = () => {
                             <div className="w-36"><input type="date" value={incomeDate} onChange={(e) => setIncomeDate(e.target.value)} className="w-full input px-2 text-sm h-[42px] bg-slate-900 border border-slate-600 rounded-md text-white focus:outline-none focus:border-emerald-500" title="Chọn ngày nhận tiền" /></div>
                             <button onClick={handleUpdateIncome} className={`px-4 py-2.5 rounded-md font-semibold ${seasonalTheme.accentColor} text-slate-900 flex items-center gap-2`}><SaveIcon /> Lưu</button>
                          </div>
-                         <div className="mt-4 max-h-40 overflow-y-auto pr-1 space-y-2">{incomeLogs.filter(l => isDateInFilter(new Date(l.date), filter)).slice().reverse().map(log => (<div key={log.id} className="flex justify-between items-center p-2 bg-slate-800/50 rounded border border-slate-700 text-sm"><span className="text-slate-400">{formatDateTime(new Date(log.date))}</span><div className="flex items-center gap-2"><span className={log.isSavingsWithdrawal ? 'text-emerald-400 italic' : 'text-white font-bold'}>{log.amount.toLocaleString('vi-VN')}đ</span>{!log.isSavingsWithdrawal && <button onClick={() => handleEditIncomeStart(log.id, log.amount, log.date)} className="text-slate-500 hover:text-amber-400"><EditIcon className="w-3 h-3" /></button>}</div></div>))}</div>
+                         <div className="mt-4 max-h-40 overflow-y-auto pr-1 space-y-2">{incomeLogs.filter(l => isDateInFilter(new Date(l.date), filter)).slice().reverse().map(log => (<div key={log.id} className="flex justify-between items-center p-2 bg-slate-800/50 rounded border border-slate-700 text-sm"><span className="text-slate-400">{formatDateTime(new Date(log.date))}</span><div className="flex items-center gap-2"><span className="text-emerald-400 italic">{log.amount.toLocaleString('vi-VN')}đ</span>{!log.isSavingsWithdrawal && <button onClick={() => handleEditIncomeStart(log.id, log.amount, log.date)} className="text-slate-500 hover:text-amber-400"><EditIcon className="w-3 h-3" /></button>}</div></div>))}</div>
                     </div>
                 </div>
 
@@ -1297,7 +1310,7 @@ const App: React.FC = () => {
                 </div> : (
                     view === 'dashboard' ? renderDashboard() : 
                     view === 'planning' ? renderPlanning() : 
-                    view === 'strategy' ? <StrategicView theme={seasonalTheme} debts={debts.filter(d => d.amountPaid < d.totalAmount)} savingsBalance={currentSavingsBalance} onClose={() => setView('dashboard')} onSavePlan={handleSaveStrategy} initialConfig={savedStrategy} /> :
+                    view === 'strategy' ? <StrategicView theme={seasonalTheme} debts={debts.filter(d => d.amountPaid < d.totalAmount)} savingsBalance={currentSavingsBalance} onClose={() => setView('dashboard')} onSavePlan={handleSaveStrategy} onDeletePlan={handleDeleteStrategy} initialConfig={savedStrategy} /> :
                     <SimulationView theme={seasonalTheme} activeDebts={debts.filter(d => d.amountPaid < d.totalAmount)} onClose={() => setView('dashboard')} />
                 )}
                 
