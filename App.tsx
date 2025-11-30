@@ -435,23 +435,26 @@ const StrategicView: React.FC<StrategicViewProps> = ({ theme, debts, savingsBala
                     // Logic: remaining / weeksLeft
                     const daysToDue = daysBetween(weekStart, d.dueDate);
                     
-                    // Only suggest payment if due date is in future
-                    if (daysToDue > 0) {
-                        const weeksLeft = Math.max(1, Math.ceil(daysToDue / 7));
+                    // [ADJUSTED LOGIC] Only suggest payment if due date is VERY CLOSE (e.g., within 4 weeks)
+                    // to avoid "double counting" feeling for far-future debts.
+                    // User complained about seeing March debts in Dec.
+                    const weeksToDue = Math.ceil(daysToDue / 7);
+                    const START_SAVING_WEEKS_BEFORE = 4; // Only start saving 4 weeks before due date
+
+                    if (daysToDue > 0 && weeksToDue <= START_SAVING_WEEKS_BEFORE) {
+                        const weeksLeft = Math.max(1, weeksToDue);
                         // Don't be too aggressive if weeksLeft is large.
                         // If weeksLeft is 1, pay all. 
                         const weekly = Math.ceil(remaining / weeksLeft);
                         
-                        // [ADJUSTMENT] If weekly amount is ridiculously high (e.g. > income/2), maybe due date is wrong?
-                        // But this is a strategy view, it shows reality.
-                        
                         debtPayment += weekly;
-                        debtDetails.push(`${d.name}: -${weekly.toLocaleString()}đ (Chia nhỏ ${weeksLeft} tuần)`);
-                    } else if (daysToDue > -7) {
+                        debtDetails.push(`${d.name}: -${weekly.toLocaleString()}đ (Sắp đến hạn: còn ${weeksLeft} tuần)`);
+                    } else if (daysToDue > -7 && daysToDue <= 0) {
                          // Due/Overdue this week
                          debtPayment += remaining;
                          debtDetails.push(`${d.name}: -${remaining.toLocaleString()}đ (Tất toán ngay!)`);
                     }
+                    // If > 4 weeks away, contribute 0 for now (Just-in-time strategy)
                 }
             });
 
@@ -478,7 +481,9 @@ const StrategicView: React.FC<StrategicViewProps> = ({ theme, debts, savingsBala
 
     const totalGoal = config.tetGoal + config.bufferGoal;
     const finalBalance = plan.length > 0 ? plan[plan.length - 1].balance : savingsBalance;
-    const progress = Math.min((finalBalance / totalGoal) * 100, 100);
+    // Progress bar logic: 0% at 0 balance, 100% at totalGoal.
+    // If balance is negative, progress is 0.
+    const progress = Math.max(0, Math.min((finalBalance / totalGoal) * 100, 100));
 
     return (
         <div className="space-y-6 animate-fade-in-up">
@@ -550,16 +555,19 @@ const StrategicView: React.FC<StrategicViewProps> = ({ theme, debts, savingsBala
                     <div className="animate-fade-in-up">
                         <div className="bg-slate-800 p-4 rounded-t-xl border-b border-slate-700 flex justify-between items-center">
                             <div>
-                                <p className="text-slate-400 text-xs">Dự kiến tích lũy đến {formatDate(new Date(config.internshipDate))}</p>
-                                <p className={`text-2xl font-bold ${finalBalance >= totalGoal ? 'text-green-400' : 'text-amber-400'}`}>{finalBalance.toLocaleString('vi-VN')}đ</p>
+                                <p className="text-slate-400 text-xs mb-1">Tiến độ tích lũy mục tiêu ({totalGoal.toLocaleString()}đ)</p>
+                                <div className="flex items-end gap-2">
+                                    <p className={`text-2xl font-bold ${finalBalance >= 0 ? 'text-white' : 'text-red-400'}`}>{finalBalance.toLocaleString('vi-VN')}đ</p>
+                                    <span className="text-xs text-slate-500 mb-1.5">/ {totalGoal.toLocaleString()}đ</span>
+                                </div>
                             </div>
-                            <div className="text-right">
-                                <p className="text-slate-400 text-xs">Mục tiêu: {totalGoal.toLocaleString()}đ</p>
-                                <div className="flex items-center gap-2">
-                                    <div className="w-32 bg-slate-700 h-2 rounded-full mt-1">
-                                        <div className={`h-2 rounded-full ${progress >= 100 ? 'bg-green-500' : 'bg-amber-500'}`} style={{width: `${progress}%`}}></div>
-                                    </div>
-                                    <span className="text-xs font-bold text-white">{Math.round(progress)}%</span>
+                            <div className="text-right w-1/2">
+                                <p className="text-slate-400 text-xs mb-1 text-right">Đã đạt {Math.round(progress)}%</p>
+                                <div className="w-full bg-slate-700 h-3 rounded-full relative overflow-hidden">
+                                    <div 
+                                        className={`h-3 rounded-full transition-all duration-1000 ${progress >= 100 ? 'bg-gradient-to-r from-emerald-500 to-green-400' : 'bg-gradient-to-r from-amber-500 to-yellow-400'}`} 
+                                        style={{width: `${progress}%`}}
+                                    ></div>
                                 </div>
                             </div>
                         </div>
