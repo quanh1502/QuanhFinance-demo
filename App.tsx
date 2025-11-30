@@ -32,6 +32,7 @@ export interface Debt {
     // New fields
     repaymentType?: 'fixed' | 'flexible';
     monthlyInstallment?: number;
+    isBNPL?: boolean; // [NEW] Đánh dấu là Ví trả sau/Credit Card
 }
 
 // --- HELPER: Xử lý ngày tháng an toàn tuyệt đối ---
@@ -108,7 +109,7 @@ const StatCard: React.FC<StatCardProps> = ({ icon, title, value, color, subtitle
     </div>
 );
 
-// [UPDATED] DebtItem to support 'fixed' vs 'flexible' logic
+// [UPDATED] DebtItem to support 'fixed' vs 'flexible' logic and BNPL badge
 interface DebtItemProps { debt: Debt; onAddPayment: (id: string, amount: number, date: Date) => void; onWithdrawPayment: (id: string, amount: number, reason: string) => void; onEdit: (debt: Debt) => void; theme: SeasonalTheme; disposableIncome: number; }
 const DebtItem: React.FC<DebtItemProps> = ({ debt, onAddPayment, onWithdrawPayment, onEdit, theme, disposableIncome }) => {
     const [inputValue, setInputValue] = useState(0);
@@ -142,8 +143,16 @@ const DebtItem: React.FC<DebtItemProps> = ({ debt, onAddPayment, onWithdrawPayme
     
     return (
         <div className={`p-4 rounded-lg shadow-md mb-3 transition-all duration-300 ${daysLeft < 0 ? 'bg-red-900/20 border border-red-500/30' : `${theme.cardBg} border border-slate-700/50`}`}>
-            <div className="flex justify-between items-start"><div className="flex-1 pr-2"><div className="flex items-center gap-2"><h4 className={`font-bold text-lg ${theme.primaryTextColor}`}>{debt.name}</h4><button onClick={() => onEdit(debt)} className="text-xs text-slate-500 hover:text-white p-1 rounded"><EditIcon /></button><button onClick={() => setShowHistory(!showHistory)} className={`text-xs px-2 py-1 rounded transition ${showHistory ? 'bg-blue-500/30 text-blue-200' : 'text-slate-500 hover:text-blue-300'}`}><HistoryIcon className="mr-1"/> Lịch sử</button></div><p className={`text-sm ${theme.secondaryTextColor} flex items-center gap-2`}><TagIcon /> {debt.source}</p>
-            <p className={`text-xs ${theme.secondaryTextColor} flex items-center gap-2 mt-1`}><CalendarIcon className="w-3 h-3"/> {formatDate(debt.createdAt)} <ArrowRightIcon className="w-3 h-3"/> {formatDate(debt.dueDate)}</p>
+            <div className="flex justify-between items-start"><div className="flex-1 pr-2">
+                <div className="flex items-center gap-2">
+                    <h4 className={`font-bold text-lg ${theme.primaryTextColor}`}>{debt.name}</h4>
+                    {/* [NEW] BNPL Badge */}
+                    {debt.isBNPL && <span className="text-[10px] bg-purple-900/50 text-purple-300 px-1.5 py-0.5 rounded border border-purple-500/30 font-bold">Ví trả sau</span>}
+                    <button onClick={() => onEdit(debt)} className="text-xs text-slate-500 hover:text-white p-1 rounded"><EditIcon /></button>
+                    <button onClick={() => setShowHistory(!showHistory)} className={`text-xs px-2 py-1 rounded transition ${showHistory ? 'bg-blue-500/30 text-blue-200' : 'text-slate-500 hover:text-blue-300'}`}><HistoryIcon className="mr-1"/> Lịch sử</button>
+                </div>
+                <p className={`text-sm ${theme.secondaryTextColor} flex items-center gap-2`}><TagIcon /> {debt.source}</p>
+                <p className={`text-xs ${theme.secondaryTextColor} flex items-center gap-2 mt-1`}><CalendarIcon className="w-3 h-3"/> {formatDate(debt.createdAt)} <ArrowRightIcon className="w-3 h-3"/> {formatDate(debt.dueDate)}</p>
             </div>
             <div className="text-right">
                 <p className={`font-bold text-xl ${theme.primaryTextColor}`}>{remaining.toLocaleString('vi-VN')}đ</p>
@@ -389,6 +398,7 @@ const App: React.FC = () => {
     const [debtType, setDebtType] = useState<'standard' | 'shopee'>('standard');
     // [MODIFIED] Added startDate to state
     // [UPDATED] Added repaymentType and monthlyInstallment to state
+    // [UPDATED] Added isBNPL to state
     const [newDebt, setNewDebt] = useState({ 
         name: '', 
         source: '', 
@@ -397,6 +407,7 @@ const App: React.FC = () => {
         startDate: new Date().toISOString().slice(0, 10), 
         repaymentType: 'flexible' as 'fixed' | 'flexible',
         monthlyInstallment: 0,
+        isBNPL: false, // Default is NOT BNPL
         targetMonth: currentDate.getMonth(), 
         targetYear: currentDate.getFullYear() 
     });
@@ -549,7 +560,25 @@ const App: React.FC = () => {
     const filteredMiscSpending = getFilteredTotal(miscLogs);
     const { activeDebts, completedDebts } = useMemo(() => debts.reduce((acc, d) => { d.amountPaid >= d.totalAmount ? acc.completedDebts.push(d) : acc.activeDebts.push(d); return acc; }, { activeDebts: [] as Debt[], completedDebts: [] as Debt[] }), [debts]);
     const displayDebts = useMemo(() => activeDebts.filter(d => { const fm = d.targetMonth ?? d.dueDate.getMonth(); const fy = d.targetYear ?? d.dueDate.getFullYear(); return fm === debtFilterMonth && fy === debtFilterYear; }).sort((a, b) => a.dueDate.getTime() - b.dueDate.getTime()), [activeDebts, debtFilterMonth, debtFilterYear]);
-    const filteredActualDebtPaid = useMemo(() => { let total = 0; debts.forEach(d => d.transactions?.forEach(t => { if (t.type === 'payment' && isDateInFilter(new Date(t.date), filter)) total += t.amount; })); return total; }, [debts, filter]);
+    
+    // [MODIFIED] FILTERED ACTUAL DEBT PAID LOGIC
+    // We now exclude payments made to debts marked as "isBNPL"
+    const filteredActualDebtPaid = useMemo(() => { 
+        let total = 0; 
+        debts.forEach(d => {
+            // [NEW] If this is a BNPL debt, we SKIP adding its payments to total spending
+            // because the original expense (food/misc) was already recorded.
+            if (d.isBNPL) return;
+
+            d.transactions?.forEach(t => { 
+                if (t.type === 'payment' && isDateInFilter(new Date(t.date), filter)) {
+                    total += t.amount; 
+                }
+            });
+        }); 
+        return total; 
+    }, [debts, filter]);
+
     const currentSavingsBalance = useMemo(() => savingsHistory.reduce((acc, trans) => trans.type === 'deposit' ? acc + trans.amount : acc - trans.amount, 0), [savingsHistory]);
     const filteredSavingsDeposited = useMemo(() => savingsHistory.filter(t => t.type === 'deposit' && isDateInFilter(new Date(t.date), filter)).reduce((sum, t) => sum + t.amount, 0), [savingsHistory, filter]);
     const weeklyDebtContribution = activeDebts.reduce((t, d) => { const rem = d.totalAmount - d.amountPaid; if (rem <= 0) return t; const w = Math.ceil(daysBetween(new Date(), d.dueDate) / 7); return w <= 0 ? t + rem : t + (rem / w); }, 0);
@@ -594,6 +623,7 @@ const App: React.FC = () => {
                 createdAt: new Date(newDebt.startDate), // Update start date (createdAt)
                 repaymentType: newDebt.repaymentType,
                 monthlyInstallment: newDebt.monthlyInstallment,
+                isBNPL: newDebt.isBNPL, // [NEW] Save BNPL status
                 targetMonth: newDebt.targetMonth, 
                 targetYear: newDebt.targetYear 
             } : d));
@@ -619,12 +649,13 @@ const App: React.FC = () => {
                     monthlyInstallment: newDebt.totalAmount, // Shopee bill is 1-time payment for that month
                     targetMonth: shopeeBillMonth,
                     targetYear: shopeeBillYear,
+                    isBNPL: true, // [NEW] Shopee is definitely BNPL
                     transactions: []
                 });
             } else if (isRecurringDebt) {
                 let cur = new Date(newDebt.dueDate), end = new Date(recurringEndDate), count = 1;
                 while (cur <= end) {
-                    list.push({ id: `${Date.now()}-${count}`, name: `${newDebt.name} ${recurringFrequency==='monthly' ? `(T${cur.getMonth()+1})` : `(Kỳ ${count})`}`, source: newDebt.source, totalAmount: newDebt.totalAmount, amountPaid: 0, dueDate: new Date(cur), createdAt: new Date(), targetMonth: cur.getMonth(), targetYear: cur.getFullYear(), transactions: [] });
+                    list.push({ id: `${Date.now()}-${count}`, name: `${newDebt.name} ${recurringFrequency==='monthly' ? `(T${cur.getMonth()+1})` : `(Kỳ ${count})`}`, source: newDebt.source, totalAmount: newDebt.totalAmount, amountPaid: 0, dueDate: new Date(cur), createdAt: new Date(), targetMonth: cur.getMonth(), targetYear: cur.getFullYear(), isBNPL: newDebt.isBNPL, transactions: [] });
                     recurringFrequency === 'weekly' ? cur.setDate(cur.getDate()+7) : cur.setMonth(cur.getMonth()+1); count++;
                 }
             } else {
@@ -638,6 +669,7 @@ const App: React.FC = () => {
                     createdAt: new Date(newDebt.startDate), // Use custom start date
                     repaymentType: newDebt.repaymentType,
                     monthlyInstallment: newDebt.monthlyInstallment,
+                    isBNPL: newDebt.isBNPL, // [NEW] Save BNPL status
                     targetMonth: newDebt.targetMonth, 
                     targetYear: newDebt.targetYear, 
                     transactions: [] 
@@ -645,7 +677,7 @@ const App: React.FC = () => {
             }
             setDebts(p => [...p, ...list]);
         }
-        setNewDebt({ name: '', source: '', totalAmount: 0, dueDate: new Date().toISOString().slice(0, 10), startDate: new Date().toISOString().slice(0, 10), repaymentType: 'flexible', monthlyInstallment: 0, targetMonth: currentDate.getMonth(), targetYear: currentDate.getFullYear() });
+        setNewDebt({ name: '', source: '', totalAmount: 0, dueDate: new Date().toISOString().slice(0, 10), startDate: new Date().toISOString().slice(0, 10), repaymentType: 'flexible', monthlyInstallment: 0, isBNPL: false, targetMonth: currentDate.getMonth(), targetYear: currentDate.getFullYear() });
         setDebtModalOpen(false); setIsRecurringDebt(false); setEditingDebtId(null); setDebtType('standard');
     };
     const handleEditDebt = (d: Debt) => { 
@@ -657,6 +689,7 @@ const App: React.FC = () => {
             startDate: d.createdAt ? d.createdAt.toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10), // Load existing start date
             repaymentType: (d as any).repaymentType || 'flexible',
             monthlyInstallment: (d as any).monthlyInstallment || 0,
+            isBNPL: d.isBNPL || false, // [NEW] Load BNPL status
             targetMonth: d.targetMonth!, 
             targetYear: d.targetYear! 
         }); 
@@ -770,7 +803,7 @@ const App: React.FC = () => {
                       <div className={`${seasonalTheme.cardBg} p-5 rounded-lg shadow-lg`}>
                         <div className="flex flex-col md:flex-row md:justify-between md:items-center mb-4 gap-4">
                            <div className="flex items-center gap-2"><h3 className={`text-xl font-bold ${seasonalTheme.primaryTextColor}`}>Nợ cần trả</h3><div className="flex items-center gap-2 bg-black/30 rounded-lg px-3 py-1 border border-slate-700"><select value={debtFilterMonth} onChange={(e) => setDebtFilterMonth(parseInt(e.target.value))} className="bg-transparent text-sm font-semibold text-white outline-none">{MONTH_NAMES.map((m, idx) => <option key={idx} value={idx} className="bg-slate-900">{m}</option>)}</select><input type="number" value={debtFilterYear} onChange={(e) => setDebtFilterYear(parseInt(e.target.value))} className="bg-transparent text-sm font-semibold text-white w-16 outline-none"/></div></div>
-                           <div className="flex gap-2"><button onClick={() => setDebtHistoryOpen(true)} className="px-3 py-2 text-sm font-semibold text-slate-300 bg-slate-800 rounded-lg flex items-center gap-1"><HistoryIcon /> Lịch sử</button><button onClick={() => { setNewDebt({ name: '', source: '', totalAmount: 0, dueDate: new Date().toISOString().slice(0, 10), startDate: new Date().toISOString().slice(0, 10), repaymentType: 'flexible', monthlyInstallment: 0, targetMonth: debtFilterMonth, targetYear: debtFilterYear }); setEditingDebtId(null); setIsRecurringDebt(false); setDebtModalOpen(true); }} className={`px-4 py-2 text-sm font-semibold text-slate-900 rounded-lg shadow-md ${seasonalTheme.accentColor}`}><PlusIcon className="inline mr-1"/> Thêm</button></div>
+                           <div className="flex gap-2"><button onClick={() => setDebtHistoryOpen(true)} className="px-3 py-2 text-sm font-semibold text-slate-300 bg-slate-800 rounded-lg flex items-center gap-1"><HistoryIcon /> Lịch sử</button><button onClick={() => { setNewDebt({ name: '', source: '', totalAmount: 0, dueDate: new Date().toISOString().slice(0, 10), startDate: new Date().toISOString().slice(0, 10), repaymentType: 'flexible', monthlyInstallment: 0, isBNPL: false, targetMonth: debtFilterMonth, targetYear: debtFilterYear }); setEditingDebtId(null); setIsRecurringDebt(false); setDebtModalOpen(true); }} className={`px-4 py-2 text-sm font-semibold text-slate-900 rounded-lg shadow-md ${seasonalTheme.accentColor}`}><PlusIcon className="inline mr-1"/> Thêm</button></div>
                         </div>
                         <div className="max-h-[70vh] overflow-y-auto pr-2">
                             {displayDebts.length > 0 ? displayDebts.map(d => <DebtItem key={d.id} debt={d} onAddPayment={handleAddPayment} onWithdrawPayment={handleWithdrawPayment} onEdit={handleEditDebt} theme={seasonalTheme} disposableIncome={disposableIncomeForDebts} />) : <div className={`text-center ${seasonalTheme.secondaryTextColor} py-8 border-2 border-dashed border-slate-700 rounded-xl`}>Không có khoản nợ nào tháng này.</div>}
@@ -830,7 +863,10 @@ const App: React.FC = () => {
                                     <div key={d.id} className="bg-slate-800/40 p-3 rounded border border-slate-700/50 flex justify-between items-center">
                                         <div className="flex-1">
                                             <div className="flex justify-between mb-1">
-                                                <span className="font-bold text-slate-200">{d.name}</span>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="font-bold text-slate-200">{d.name}</span>
+                                                    {d.isBNPL && <span className="text-[9px] bg-purple-900 text-purple-300 px-1 rounded border border-purple-500/50">Ví trả sau</span>}
+                                                </div>
                                                 <span className="text-xs text-pink-300 font-bold">Còn {(d.totalAmount - d.amountPaid).toLocaleString()}đ</span>
                                             </div>
                                             <div className="w-full bg-slate-700 rounded-full h-1.5">
@@ -947,8 +983,17 @@ const App: React.FC = () => {
                             <span className="text-sm text-white">Linh hoạt (Người thân)</span>
                         </label>
                     </div>
+                    {/* [NEW] BNPL Checkbox */}
+                    <div className="mt-2 pt-2 border-t border-slate-700">
+                        <label className="flex items-center cursor-pointer gap-2">
+                            <input type="checkbox" checked={newDebt.isBNPL || false} onChange={(e) => setNewDebt({...newDebt, isBNPL: e.target.checked})} className="accent-purple-500 w-4 h-4" />
+                            <span className="text-sm text-purple-300 font-bold">Là Ví trả sau/Thẻ tín dụng (Không tính vào tổng chi)</span>
+                        </label>
+                        <p className="text-[10px] text-slate-500 mt-1 pl-6">Chọn mục này để khi trả nợ, hệ thống không cộng dồn vào tổng chi tiêu tháng (tránh tính 2 lần).</p>
+                    </div>
+
                     {newDebt.repaymentType === 'fixed' && (
-                        <div className="animate-fade-in-up">
+                        <div className="animate-fade-in-up mt-3">
                             <label className="text-xs text-slate-300 mb-1 block">Số tiền đóng mỗi tháng:</label>
                             <CurrencyInput value={newDebt.monthlyInstallment} onValueChange={v => setNewDebt({...newDebt, monthlyInstallment: v})} className="input w-full text-sm" placeholder="Nhập số tiền..." />
                         </div>
