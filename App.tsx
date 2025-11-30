@@ -82,6 +82,32 @@ const loadLocalData = () => {
     } catch (e) { return null; }
 };
 
+// --- [NEW] Helper to get date from filter ---
+const getDateFromFilter = (filter: FilterState): Date => {
+    const now = new Date();
+    
+    // Nếu bộ lọc trùng với thời gian hiện tại, dùng ngày giờ hiện tại để chính xác
+    if (filter.type === 'week' && filter.week === getWeekNumber(now)[1] && filter.year === now.getFullYear()) return now;
+    if (filter.type === 'month' && filter.month === now.getMonth() && filter.year === now.getFullYear()) return now;
+    if (filter.type === 'year' && filter.year === now.getFullYear()) return now;
+
+    // Nếu khác, tính ngày bắt đầu của bộ lọc
+    if (filter.type === 'week' && filter.week) {
+        // Tính ngày thứ 2 của tuần đó (Simple approximation for ISO week)
+        const simple = new Date(filter.year, 0, 1 + (filter.week - 1) * 7);
+        const day = simple.getDay();
+        const diff = simple.getDate() - day + (day === 0 ? -6 : 1); // Adjust to Monday
+        const targetDate = new Date(simple.setDate(diff));
+        // Set to noon to avoid timezone edge cases
+        targetDate.setHours(12, 0, 0, 0);
+        return targetDate;
+    }
+    if (filter.type === 'month' && filter.month !== undefined) {
+        return new Date(filter.year, filter.month, 1, 12, 0, 0);
+    }
+    return new Date(filter.year, 0, 1, 12, 0, 0);
+};
+
 // --- INLINE COMPONENTS ---
 interface CurrencyInputProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'> {
     value: number;
@@ -663,7 +689,7 @@ const StrategicView: React.FC<StrategicViewProps> = ({ theme, debts, savingsBala
             </div>
         </div>
     );
-}
+};
 
 // --- APP COMPONENT ---
 const App: React.FC = () => {
@@ -932,11 +958,21 @@ const App: React.FC = () => {
     // Handlers
     const handleToggleGas = () => isGasFilledToday ? setGasHistory(prev => prev.slice(0, -1)) : setGasHistory(prev => [...prev, { id: Date.now().toString(), date: new Date() }]);
     const handleToggleWifi = () => isWifiPaidRecently ? setLastWifiPayment(null) : setLastWifiPayment(new Date());
-    const handleUpdateIncome = () => { setIncomeLogs(p => [...p, { id: Date.now().toString(), amount: incomeInput, date: new Date(incomeDate) }]); setIncomeInput(0); };
+    const handleUpdateIncome = () => { 
+        const date = getDateFromFilter(filter);
+        setIncomeLogs(p => [...p, { id: Date.now().toString(), amount: incomeInput, date: date }]); 
+        setIncomeInput(0); 
+    };
     const handleSavingsDeposit = () => { if (financialStatus <= 0) return; const newTransaction: SavingsTransaction = { id: Date.now().toString(), date: new Date(), amount: financialStatus, type: 'deposit', note: 'Cất tiền dư' }; setSavingsHistory(prev => [...prev, newTransaction]); };
     const handleSavingsWithdraw = (amount: number) => { if (amount > 0 && amount <= currentSavingsBalance) { setSavingsHistory(prev => [...prev, { id: Date.now().toString(), date: new Date(), amount, type: 'withdrawal', note: 'Rút tiêu dùng' }]); setIncomeLogs(p => [...p, { id: Date.now().toString(), amount, date: new Date(), isSavingsWithdrawal: true }]); } };
-    const handleFoodChange = (amount: number) => { if (amount !== 0) setFoodLogs(p => [...p, { id: Date.now().toString(), amount, date: new Date() }]); };
-    const handleMiscChange = (amount: number) => { if (amount !== 0) setMiscLogs(p => [...p, { id: Date.now().toString(), name: amount > 0 ? 'Chi nhanh' : 'Giảm bớt', amount, date: new Date() }]); };
+    const handleFoodChange = (amount: number) => { 
+        const date = getDateFromFilter(filter);
+        if (amount !== 0) setFoodLogs(p => [...p, { id: Date.now().toString(), amount, date: date }]); 
+    };
+    const handleMiscChange = (amount: number) => { 
+        const date = getDateFromFilter(filter);
+        if (amount !== 0) setMiscLogs(p => [...p, { id: Date.now().toString(), name: amount > 0 ? 'Chi nhanh' : 'Giảm bớt', amount, date: date }]); 
+    };
     const handleAddPayment = (id: string, amount: number, date: Date) => setDebts(p => p.map(d => d.id === id ? { ...d, amountPaid: d.amountPaid + amount, transactions: [...(d.transactions||[]), { id: Date.now().toString(), date, amount, type: 'payment' }] } : d));
     const handleWithdrawPayment = (id: string, amount: number, reason: string) => setDebts(p => p.map(d => d.id === id ? { ...d, amountPaid: Math.max(0, d.amountPaid - amount), transactions: [...(d.transactions||[]), { id: Date.now().toString(), date: new Date(), amount, type: 'withdrawal', reason }] } : d));
     const handleDeleteMiscLog = (id: string, amount: number) => setMiscLogs(p => p.filter(l => l.id !== id));
@@ -947,6 +983,16 @@ const App: React.FC = () => {
     const handleEditIncomeStart = (id: string, val: number, date: Date) => { setEditingIncomeId(id); setEditIncomeValue(val); setEditIncomeDate(new Date(date).toISOString().slice(0, 10)); setIncomeEditOpen(true); };
     const handleEditIncomeSave = () => { if(editingIncomeId) setIncomeLogs(p => p.map(l => l.id === editingIncomeId ? {...l, amount: editIncomeValue, date: new Date(editIncomeDate)} : l)); setIncomeEditOpen(false); setEditingIncomeId(null); };
     
+    // Update manual input dates when filter changes
+    useEffect(() => {
+        const date = getDateFromFilter(filter);
+        const dateStr = date.toISOString().slice(0, 10);
+        setIncomeDate(dateStr);
+        // Also update misc log date if it hasn't been manually set? 
+        // Actually the modal handles its own state, but let's update default
+        setNewMiscLog(prev => ({ ...prev, date: dateStr }));
+    }, [filter]);
+
     // [UPDATED] Handle Save Debt with Shopee Year
     const handleSaveDebt = (e: React.FormEvent) => {
         e.preventDefault();
